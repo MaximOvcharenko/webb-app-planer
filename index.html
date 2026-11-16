@@ -15,51 +15,6 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <!-- ЭКРАН БЛОКИРОВКИ ПО PIN-КОДУ -->
-  <div class="pin-lock-screen" id="pin-lock-screen" role="dialog" aria-modal="true" aria-labelledby="pin-lock-title">
-    <div class="pin-lock-card">
-      <div class="pin-lock-icon" aria-hidden="true">🔐</div>
-      <h2 class="pin-lock-title" id="pin-lock-title">ГеоЖурнал</h2>
-      <p class="pin-lock-subtitle" id="pin-lock-subtitle">Введите PIN-код для доступа</p>
-
-      <div class="pin-input-wrap">
-        <input
-          type="password"
-          inputmode="numeric"
-          pattern="[0-9]*"
-          maxlength="8"
-          class="pin-code-input"
-          id="pin-code-input"
-          placeholder="••••"
-          autocomplete="off"
-        />
-      </div>
-      <p class="pin-error-msg hidden" id="pin-error-msg">Неверный PIN-код</p>
-
-      <div class="pin-keypad" id="pin-keypad">
-        <button type="button" class="pin-key" data-digit="1">1</button>
-        <button type="button" class="pin-key" data-digit="2">2</button>
-        <button type="button" class="pin-key" data-digit="3">3</button>
-        <button type="button" class="pin-key" data-digit="4">4</button>
-        <button type="button" class="pin-key" data-digit="5">5</button>
-        <button type="button" class="pin-key" data-digit="6">6</button>
-        <button type="button" class="pin-key" data-digit="7">7</button>
-        <button type="button" class="pin-key" data-digit="8">8</button>
-        <button type="button" class="pin-key" data-digit="9">9</button>
-        <button type="button" class="pin-key pin-key-action" id="btn-pin-clear" title="Очистить">C</button>
-        <button type="button" class="pin-key" data-digit="0">0</button>
-        <button type="button" class="pin-key pin-key-action" id="btn-pin-backspace" title="Стереть">⌫</button>
-      </div>
-
-      <label class="pin-remember-row">
-        <input type="checkbox" id="pin-remember-checkbox" checked />
-        <span>Запомнить это устройство</span>
-      </label>
-
-      <button type="button" class="btn btn-primary w-full mt-10" id="btn-pin-submit">Войти</button>
-    </div>
-  </div>
-
   <!-- Верхняя шапка -->
   <header class="app-header">
     <div class="header-brand">
@@ -85,9 +40,6 @@
       </div>
       <button type="button" class="icon-btn" id="btn-theme-toggle" aria-label="Переключить тему" title="Светлая / тёмная тема (для солнца)">
         <span id="theme-icon">☀️</span>
-      </button>
-      <button type="button" class="icon-btn" id="btn-lock-app" aria-label="Заблокировать" title="Заблокировать экран (PIN)">
-        <span>🔒</span>
       </button>
     </div>
   </header>
@@ -391,26 +343,6 @@
         </div>
 
         <div id="directory-tags-list" class="tags-manage-list mt-12"></div>
-      </div>
-
-      <!-- Защита PIN-кодом -->
-      <div class="card mt-12">
-        <h2 class="card-Title">🔐 Безопасность (PIN-код)</h2>
-        <p class="card-desc">Защищает вход в приложение. Вы можете сменить PIN-код на этом устройстве или заблокировать приложение прямо сейчас.</p>
-        <div class="duration-inputs-row mt-10">
-          <div class="input-group">
-            <label for="settings-old-pin">Текущий PIN</label>
-            <input type="password" inputmode="numeric" maxlength="8" class="input-field text-center" id="settings-old-pin" placeholder="••••" autocomplete="off" />
-          </div>
-          <div class="input-group">
-            <label for="settings-new-pin">Новый PIN</label>
-            <input type="password" inputmode="numeric" maxlength="8" class="input-field text-center" id="settings-new-pin" placeholder="4–8 цифр" autocomplete="off" />
-          </div>
-        </div>
-        <div class="export-actions mt-10">
-          <button type="button" class="btn btn-primary" id="btn-change-pin">Сохранить новый PIN-код</button>
-          <button type="button" class="btn btn-secondary" id="btn-settings-lock-now">🔒 Выйти и заблокировать экран</button>
-        </div>
       </div>
 
       <!-- Резервное копирование -->
