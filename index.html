@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" id="meta-theme-color" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="ГеоЖурнал" />
+  <meta name="description" content="Полевой журнал геодезиста: учёт объектов, времени и выполненных работ" />
+  <title>ГеоЖурнал — Полевой учёт геодезиста</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- Верхняя шапка -->
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="brand-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="9" r="5"></circle>
+          <circle cx="12" cy="9" r="1.5"></circle>
+          <path d="M12 14v7"></path>
+          <path d="M12 14l-6 7"></path>
+          <path d="M12 14l6 7"></path>
+        </svg>
+      </div>
+      <div>
+        <h1 class="brand-title">ГеоЖурнал</h1>
+        <p class="brand-subtitle" id="header-date-label">Сегодня</p>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <div class="today-pill" id="header-today-pill" title="Всего времени за сегодня">
+        <span class="today-pill-label">Сегодня:</span>
+        <strong id="header-today-total">0 ч 00 м</strong>
+      </div>
+      <button type="button" class="icon-btn" id="btn-theme-toggle" aria-label="Переключить тему" title="Светлая / тёмная тема (для солнца)">
+        <span id="theme-icon">☀️</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Плавающая плашка активного таймера, если пользователь перешёл на другую вкладку -->
+  <div class="floating-timer-bar hidden" id="floating-timer-bar">
+    <div class="floating-timer-info" id="floating-timer-click">
+      <span class="pulse-dot"></span>
+      <div class="floating-timer-text">
+        <strong id="floating-timer-site">Объект не выбран</strong>
+        <span id="floating-timer-clock">00:00:00</span>
+      </div>
+    </div>
+    <button type="button" class="btn-floating-stop" id="btn-floating-stop">Завершить</button>
+  </div>
+
+  <!-- Основной контейнер вкладок -->
+  <main class="app-main">
+    <!-- ВКЛАДКА 1: ЗАПИСЬ ВЫЕЗДА -->
+    <section class="tab-view active" id="view-work" aria-label="Запись выезда">
+      <!-- Переключатель режима: Таймер / Вручную -->
+      <div class="mode-switch" role="tablist" aria-label="Режим записи времени">
+        <button type="button" class="mode-btn active" id="mode-btn-timer" data-mode="timer" role="tab" aria-selected="true">
+          ⏱ Живой таймер
+        </button>
+        <button type="button" class="mode-btn" id="mode-btn-manual" data-mode="manual" role="tab" aria-selected="false">
+          ✍️ Ввести вручную
+        </button>
+      </div>
+
+      <div class="card main-form-card" id="work-form-card">
+        <!-- БЛОК 1: ВЫБОР ОБЪЕКТА -->
+        <div class="form-section">
+          <div class="section-header">
+            <label class="section-label">1. Объект</label>
+            <button type="button" class="link-btn" id="btn-toggle-new-site">+ Новый объект</button>
+          </div>
+
+          <!-- Быстрые кнопки объектов -->
+          <div class="site-chips-container" id="quick-site-chips"></div>
+
+          <!-- Форма быстрого добавления нового объекта -->
+          <div class="inline-box hidden" id="inline-new-site-box">
+            <input type="text" class="input-field" id="new-site-name-input" placeholder="Название (напр. ЖК Солнечный, корп. 3)" autocomplete="off" />
+            <input type="text" class="input-field mt-8" id="new-site-note-input" placeholder="Адрес / прораб / примечание (необязательно)" autocomplete="off" />
+            <div class="inline-box-actions">
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-cancel-new-site">Отмена</button>
+              <button type="button" class="btn btn-primary btn-sm" id="btn-save-new-site">Добавить и выбрать</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- БЛОК 2А: ЖИВОЙ ТАЙМЕР -->
+        <div class="form-section" id="timer-section">
+          <div class="section-header">
+            <label class="section-label">2. Время на объекте</label>
+            <span class="status-badge" id="timer-status-badge">Ожидание старта</span>
+          </div>
+
+          <div class="timer-display-box" id="timer-display-box">
+            <div class="timer-digits" id="timer-digits">00:00:00</div>
+            <div class="timer-meta hidden" id="timer-meta">
+              <span>Начало: <strong id="timer-start-label">--:--</strong></span>
+              <button type="button" class="btn-inline-edit" id="btn-edit-timer-start">Изменить время старта</button>
+            </div>
+            <!-- Редактирование старта на ходу (если забыл включить сразу по приезду) -->
+            <div class="timer-start-Adjust hidden" id="timer-start-adjust-box">
+              <label class="small-label">Фактическое время приезда:</label>
+              <div class="row-gap-8">
+                <input type="time" class="input-field" id="timer-custom-start-time" />
+                <button type="button" class="btn btn-primary btn-sm" id="btn-apply-timer-start">ОК</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="timer-controls">
+            <button type="button" class="btn btn-start-timer" id="btn-start-timer">
+              <span class="btn-icon">▶</span> НАЧАТЬ НА ОБЪЕКТЕ
+            </button>
+            <div class="timer-running-actions hidden" id="timer-running-actions">
+              <button type="button" class="btn btn-stop-timer" id="btn-stop-timer">
+                <span class="btn-icon">⏹</span> ЗАВЕРШИТЬ И СОХРАНИТЬ
+              </button>
+              <button type="button" class="btn btn-danger-outline" id="btn-cancel-timer" title="Сбросить таймер без сохранения">
+                Сброс
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- БЛОК 2Б: РУЧНОЙ ВВОД ВРЕМЕНИ -->
+        <div class="form-section hidden" id="manual-time-section">
+          <div class="section-header">
+            <label class="section-label">2. Дата и время</label>
+            <div class="quick-date-pills">
+              <button type="button" class="mini-pill active" id="btn-date-today">Сегодня</button>
+              <button type="button" class="mini-pill" id="btn-date-yesterday">Вчера</button>
+            </div>
+          </div>
+
+          <div class="manual-date-row">
+            <input type="date" class="input-field" id="manual-date-input" />
+          </div>
+
+          <!-- Подпереключатель: По часам или С—До -->
+          <div class="sub-mode-tabs mt-10">
+            <button type="button" class="sub-tab active" id="subtab-duration" data-submode="duration">Потрачено часов</button>
+            <button type="button" class="sub-tab" id="subtab-interval" data-submode="interval">Интервал (С — До)</button>
+          </div>
+
+          <!-- Вариант 1: Быстрый выбор длительности (часы / минуты) -->
+          <div id="manual-duration-box" class="mt-10">
+            <div class="duration-presets" id="duration-presets">
+              <button type="button" class="preset-chip" data-mins="30">0.5 ч</button>
+              <button type="button" class="preset-chip" data-mins="60">1 ч</button>
+              <button type="button" class="preset-chip" data-mins="90">1.5 ч</button>
+              <button type="button" class="preset-chip active" data-mins="120">2 ч</button>
+              <button type="button" class="preset-chip" data-mins="180">3 ч</button>
+              <button type="button" class="preset-chip" data-mins="240">4 ч</button>
+              <button type="button" class="preset-chip" data-mins="360">6 ч</button>
+              <button type="button" class="preset-chip" data-mins="480">8 ч</button>
+            </div>
+            <div class="duration-inputs-row mt-8">
+              <div class="input-group">
+                <label for="manual-hours-input">Часы</label>
+                <input type="number" min="0" max="24" step="1" class="input-field text-center" id="manual-hours-input" value="2" inputmode="numeric" />
+              </div>
+              <div class="input-group">
+                <label for="manual-mins-input">Минуты</label>
+                <input type="number" min="0" max="59" step="5" class="input-field text-center" id="manual-mins-input" value="0" inputmode="numeric" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Вариант 2: Интервал С — До -->
+          <div id="manual-interval-box" class="mt-10 hidden">
+            <div class="duration-inputs-row">
+              <div class="input-group">
+                <label for="manual-start-time">Приехал (С)</label>
+                <input type="time" class="input-field text-center" id="manual-start-time" value="09:00" />
+              </div>
+              <div class="input-group">
+                <label for="manual-end-time">Уехал (До)</label>
+                <input type="time" class="input-field text-center" id="manual-end-time" value="11:00" />
+              </div>
+            </div>
+            <p class="calc-duration-hint" id="interval-calc-hint">Итого: <strong>2 ч 00 мин</strong></p>
+          </div>
+        </div>
+
+        <!-- БЛОК 3: ЧТО ДЕЛАЛ (ТЕГИ + ОПИСАНИЕ) -->
+        <div class="form-section">
+          <div class="section-header">
+            <label class="section-label">3. Что делал на объекте</label>
+            <button type="button" class="link-btn" id="btn-toggle-new-tag">+ Свой шаблон</button>
+          </div>
+
+          <div class="tags-container" id="work-tags-container"></div>
+
+          <!-- Мини-форма добавления своего шаблона работы -->
+          <div class="inline-box hidden" id="inline-new-tag-box">
+            <div class="row-gap-8">
+              <input type="text" class="input-field" id="new-tag-input" placeholder="Напр. Проверка опалубки" autocomplete="off" />
+              <button type="button" class="btn btn-primary btn-sm" id="btn-save-new-tag">Добавить</button>
+            </div>
+          </div>
+
+          <textarea
+            class="input-field textarea-field mt-10"
+            id="work-note-input"
+            rows="2"
+            placeholder="Комментарий: оси, этаж, секция, объём, кому сдал..."
+          ></textarea>
+        </div>
+
+        <!-- Кнопка сохранения для ручного режима -->
+        <button type="button" class="btn btn-save-manual hidden" id="btn-save-manual">
+          💾 СОХРАНИТЬ ЗАПИСЬ
+        </button>
+      </div>
+
+      <!-- СВОДКА ЗА СЕГОДНЯ -->
+      <div class="today-section">
+        <div class="section-title-row">
+          <h2 class="section-heading">Выезды за сегодня</h2>
+          <span class="subtle-count" id="today-entries-count">0 выездов</span>
+        </div>
+        <div id="today-entries-list" class="entries-list"></div>
+      </div>
+    </section>
+
+    <!-- ВКЛАДКА 2: ЖУРНАЛ И ОТЧЁТЫ -->
+    <section class="tab-view" id="view-history" aria-label="Журнал и отчёты">
+      <div class="card filter-card">
+        <label class="section-label">Период отчёта</label>
+        <div class="period-chips" id="period-chips">
+          <button type="button" class="period-chip" data-period="today">Сегодня</button>
+          <button type="button" class="period-chip" data-period="yesterday">Вчера</button>
+          <button type="button" class="period-chip active" data-period="week">Неделя</button>
+          <button type="button" class="period-chip" data-period="month">Месяц</button>
+          <button type="button" class="period-chip" data-period="all">Все</button>
+          <button type="button" class="period-chip" data-period="custom">Даты...</button>
+        </div>
+
+        <div class="custom-dates-row hidden mt-10" id="custom-dates-row">
+          <div class="input-group">
+            <label for="filter-date-from">С даты</label>
+            <input type="date" class="input-field" id="filter-date-from" />
+          </div>
+          <div class="input-group">
+            <label for="filter-date-to">По дату</label>
+            <input type="date" class="input-field" id="filter-date-to" />
+          </div>
+        </div>
+
+        <div class="mt-10">
+          <label class="section-label" for="filter-site-select">Фильтр по объекту</label>
+          <select class="input-field select-field mt-4" id="filter-site-select">
+            <option value="all">Все объекты</option>
+          </select>
+        </div>
+
+        <!-- Статистика за выбранный период -->
+        <div class="stats-grid mt-12">
+          <div class="stat-box highlight">
+            <span class="stat-label">Всего времени</span>
+            <strong class="stat-value" id="stat-total-time">0 ч 00 м</strong>
+            <span class="stat-sub" id="stat-total-decimal">0.0 ч</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-label">Выездов</span>
+            <strong class="stat-value" id="stat-total-visits">0</strong>
+            <span class="stat-sub">записей</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-label">Объектов</span>
+            <strong class="stat-value" id="stat-total-sites">0</strong>
+            <span class="stat-sub">в работе</span>
+          </div>
+        </div>
+
+        <!-- Кнопки экспорта -->
+        <div class="export-actions mt-12">
+          <button type="button" class="btn btn-report" id="btn-open-text-report">
+            📋 Отчёт для WhatsApp / TG
+          </button>
+          <button type="button" class="btn btn-excel" id="btn-export-csv">
+            📊 Выгрузить Excel (CSV)
+          </button>
+        </div>
+      </div>
+
+      <!-- Сводка по объектам за период -->
+      <div class="card mt-12" id="period-sites-breakdown-card">
+        <div class="section-header">
+          <h3 class="card-Title">Распределение часов по объектам</h3>
+        </div>
+        <div id="period-sites-breakdown" class="sites-breakdown-list"></div>
+      </div>
+
+      <!-- Список записей за период -->
+      <div class="mt-14">
+        <div class="section-title-row">
+          <h2 class="section-heading">Записи за период</h2>
+          <span class="subtle-count" id="history-entries-count">0 записей</span>
+        </div>
+        <div id="history-entries-list" class="entries-list"></div>
+      </div>
+    </section>
+
+    <!-- ВКЛАДКА 3: ОБЪЕКТЫ И НАСТРОЙКИ -->
+    <section class="tab-view" id="view-sites" aria-label="Справочник объектов и настройки">
+      <!-- Справочник объектов -->
+      <div class="card">
+        <div class="section-header">
+          <h2 class="card-Title">Строительные объекты</h2>
+          <span class="subtle-count" id="sites-total-count">0</span>
+        </div>
+        <p class="card-desc">Нажмите «Начать выезд» на любом объекте, чтобы сразу перейти к записи.</p>
+
+        <div class="add-site-form mt-10">
+          <input type="text" class="input-field" id="dir-site-name" placeholder="Название нового объекта..." autocomplete="off" />
+          <input type="text" class="input-field mt-8" id="dir-site-note" placeholder="Адрес, прораб или комментарий (необязательно)" autocomplete="off" />
+          <button type="button" class="btn btn-primary mt-8 w-full" id="btn-dir-add-site">+ Добавить объект в справочник</button>
+        </div>
+
+        <div id="directory-sites-list" class="directory-list mt-12"></div>
+      </div>
+
+      <!-- Шаблоны видов работ -->
+      <div class="card mt-12">
+        <div class="section-header">
+          <h2 class="card-Title">Шаблоны видов работ</h2>
+          <button type="button" class="link-btn" id="btn-reset-default-tags">Вернуть стандартные</button>
+        </div>
+        <p class="card-desc">Быстрые кнопки для заполнения поля «Что делал» в один тап.</p>
+
+        <div class="row-gap-8 mt-10">
+          <input type="text" class="input-field" id="dir-tag-name" placeholder="Новый вид работ (напр. Крен колонн)" autocomplete="off" />
+          <button type="button" class="btn btn-primary btn-sm" id="btn-dir-add-tag">Добавить</button>
+        </div>
+
+        <div id="directory-tags-list" class="tags-manage-list mt-12"></div>
+      </div>
+
+      <!-- Резервное копирование -->
+      <div class="card mt-12">
+        <h2 class="card-Title">Сохранность данных (Резервная копия)</h2>
+        <p class="card-desc">Все записи надёжно хранятся в памяти вашего телефона и работают без интернета. Вы можете сохранить файл резервной копии или перенести данные на другое устройство.</p>
+        <div class="export-actions mt-10">
+          <button type="button" class="btn btn-secondary" id="btn-backup-export">⬇️ Скачать резервную копию (.json)</button>
+          <label class="btn btn-secondary file-label-btn">
+            ⬆️ Загрузить из копии (.json)
+            <input type="file" id="input-backup-import" accept=".json,application/json" hidden />
+          </label>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- МОДАЛЬНОЕ ОКНО: ЗАВЕРШЕНИЕ ТАЙМЕРА / РЕДАКТИРОВАНИЕ ЗАПИСИ -->
+  <div class="modal-backdrop hidden" id="entry-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <h3 id="modal-title">Проверка и сохранение выезда</h3>
+        <button type="button" class="icon-btn btn-close-modal" id="btn-close-entry-modal" aria-label="Закрыть">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="modal-entry-id" />
+
+        <div class="form-group">
+          <label for="modal-site-select">Объект</label>
+          <select class="input-field select-field" id="modal-site-select"></select>
+        </div>
+
+        <div class="form-group mt-10">
+          <label for="modal-date-input">Дата</label>
+          <input type="date" class="input-field" id="modal-date-input" />
+        </div>
+
+        <div class="duration-inputs-row mt-10">
+          <div class="input-group">
+            <label for="modal-start-time">Приезд (С)</label>
+            <input type="time" class="input-field text-center" id="modal-start-time" />
+          </div>
+          <div class="input-group">
+            <label for="modal-end-time">Отъезд (До)</label>
+            <input type="time" class="input-field text-center" id="modal-end-time" />
+          </div>
+        </div>
+
+        <div class="duration-inputs-row mt-10">
+          <div class="input-group">
+            <label for="modal-hours-input">Итого часов</label>
+            <input type="number" min="0" max="24" class="input-field text-center" id="modal-hours-input" inputmode="numeric" />
+          </div>
+          <div class="input-group">
+            <label for="modal-mins-input">Итого минут</label>
+            <input type="number" min="0" max="59" class="input-field text-center" id="modal-mins-input" inputmode="numeric" />
+          </div>
+        </div>
+
+        <div class="form-group mt-10">
+          <label>Виды работ</label>
+          <div class="tags-container mt-6" id="modal-tags-container"></div>
+        </div>
+
+        <div class="form-group mt-10">
+          <label for="modal-note-input">Комментарий (что сделано)</label>
+          <textarea class="input-field textarea-field mt-4" id="modal-note-input" rows="3" placeholder="Оси, этаж, отметки, кому сдал..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-entry-modal">Отмена</button>
+        <button type="button" class="btn btn-primary" id="btn-confirm-entry-modal">💾 Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- МОДАЛЬНОЕ ОКНО: ТЕКСТОВЫЙ ОТЧЁТ ДЛЯ WHATSAPP / TELEGRAM -->
+  <div class="modal-backdrop hidden" id="report-modal" role="dialog" aria-modal="true" aria-labelledby="report-modal-title">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <h3 id="report-modal-title">Текстовый отчёт</h3>
+        <button type="button" class="icon-btn btn-close-modal" id="btn-close-report-modal" aria-label="Закрыть">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="sub-mode-tabs">
+          <button type="button" class="sub-tab active" id="report-group-date" data-group="date">По датам</button>
+          <button type="button" class="sub-tab" id="report-group-site" data-group="site">По объектам</button>
+        </div>
+        <textarea class="input-field report-preview-area mt-10" id="report-preview-text" rows="11" readonly></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-close-report-footer">Закрыть</button>
+        <button type="button" class="btn btn-report" id="btn-copy-report-text">📋 Скопировать в буфер</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Нижняя панель навигации (под большой палец) -->
+  <nav class="bottom-nav" aria-label="Основная навигация">
+    <button type="button" class="nav-item active" data-target="view-work">
+      <span class="nav-icon">⏱</span>
+      <span class="nav-label">Выезд</span>
+    </button>
+    <button type="button" class="nav-item" data-target="view-history">
+      <span class="nav-icon">📊</span>
+      <span class="nav-label">Журнал и Отчёт</span>
+    </button>
+    <button type="button" class="nav-item" data-target="view-sites">
+      <span class="nav-icon">🏗️</span>
+      <span class="nav-label">Объекты</span>
+    </button>
+  </nav>
+
+  <!-- Всплывающее уведомление (Toast) -->
+  <div class="toast hidden" id="toast-notification" role="status" aria-live="polite"></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

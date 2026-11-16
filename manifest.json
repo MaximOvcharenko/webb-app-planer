@@ -1,0 +1,20 @@
+{
+  "name": "ГеоЖурнал — Учёт выездов геодезиста",
+  "short_name": "ГеоЖурнал",
+  "description": "Полевой журнал учёта объектов, рабочего времени и выполненных геодезических работ",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#ea580c",
+  "lang": "ru",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#0f172a"/>
+  <rect x="24" y="24" width="464" height="464" rx="92" fill="none" stroke="#f97316" stroke-width="12" stroke-opacity="0.4"/>
+  <!-- Tripod legs -->
+  <path d="M256 260 L136 440 M256 260 L376 440 M256 260 L256 448" stroke="#94a3b8" stroke-width="24" stroke-linecap="round"/>
+  <!-- Total station / Theodolite head -->
+  <rect x="196" y="120" width="120" height="120" rx="24" fill="#f97316"/>
+  <circle cx="256" cy="180" r="34" fill="#0f172a"/>
+  <circle cx="256" cy="180" r="14" fill="#38bdf8"/>
+  <!-- Crosshair lines -->
+  <path d="M256 130 L256 154 M256 206 L256 230 M206 180 L230 180 M282 180 L306 180" stroke="#f8fafc" stroke-width="6" stroke-linecap="round"/>
+  <!-- Base plate -->
+  <rect x="176" y="244" width="160" height="22" rx="10" fill="#e2e8f0"/>
+</svg>
