@@ -7,8 +7,14 @@
     TAGS: 'geojournal_tags_v1',
     ENTRIES: 'geojournal_entries_v1',
     TIMER: 'geojournal_active_timer_v1',
-    THEME: 'geojournal_theme_v1'
+    THEME: 'geojournal_theme_v1',
+    PIN_HASH: 'geojournal_pin_hash_v1',
+    UNLOCKED: 'geojournal_unlocked_v1'
   };
+
+  // Зашифрованный отпечаток (SHA-256 с солью) стартового PIN-кода
+  const PIN_SALT = 'geojournal_salt_v1:';
+  const DEFAULT_PIN_HASH = 'a328bb84f4daaa4c8386413182ed030c39b73c1fe678a52564d32d9274a348d9';
 
   const DEFAULT_TAGS = [
     'Tartunnat',
@@ -38,8 +44,8 @@
     note: ''
   };
 
-  // Текущее состояние формы записи
-  let currentWorkMode = 'timer'; // 'timer' | 'manual'
+  // Текущее состояние формы записи (по умолчанию — ручной ввод)
+  let currentWorkMode = 'manual'; // 'manual' | 'timer'
   let manualSubMode = 'duration'; // 'duration' | 'interval'
   let selectedSiteId = '';
   let selectedTags = [];
@@ -1692,6 +1698,208 @@
         e.target.value = '';
       }
     });
+
+    // Управление блокировкой PIN-кодом
+    bindPinEvents();
+  }
+
+  // --- КРИПТОГРАФИЧЕСКИЙ SHA-256 И ЗАЩИТА PIN-КОДОМ ---
+  function sha256Hex(ascii) {
+    const rightRotate = (value, amount) => (value >>> amount) | (value << (32 - amount));
+    const mathPow = Math.pow;
+    const maxWord = mathPow(2, 32);
+    let result = '';
+    const words = [];
+    const asciiBitLength = ascii.length * 8;
+    let hash = [];
+    const k = [];
+    let primeCounter = 0;
+
+    const isComposite = {};
+    for (let candidate = 2; primeCounter < 64; candidate++) {
+      if (!isComposite[candidate]) {
+        for (let i = 0; i < 313; i += candidate) {
+          isComposite[i] = candidate;
+        }
+        hash[primeCounter] = (mathPow(candidate, 0.5) * maxWord) | 0;
+        k[primeCounter++] = (mathPow(candidate, 1 / 3) * maxWord) | 0;
+      }
+    }
+
+    ascii += '\x80';
+    while ((ascii.length % 64) - 56) ascii += '\x00';
+    for (let i = 0; i < ascii.length; i++) {
+      const j = ascii.charCodeAt(i);
+      words[i >> 2] |= j << (((3 - i) % 4) * 8);
+    }
+    words[words.length] = (asciiBitLength / maxWord) | 0;
+    words[words.length] = asciiBitLength;
+
+    for (let j = 0; j < words.length; ) {
+      const w = words.slice(j, (j += 16));
+      const oldHash = hash.slice(0);
+      hash = hash.slice(0, 8);
+
+      for (let i = 0; i < 64; i++) {
+        const w15 = w[i - 15];
+        const w2 = w[i - 2];
+        const a = hash[0];
+        const e = hash[4];
+        const temp1 =
+          hash[7] +
+          (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25)) +
+          ((e & hash[5]) ^ (~e & hash[6])) +
+          k[i] +
+          (w[i] =
+            i < 16
+              ? w[i]
+              : (w[i - 16] +
+                  (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3)) +
+                  w[i - 7] +
+                  (rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10))) |
+                0);
+        const temp2 =
+          (rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22)) +
+          ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+
+        hash = [(temp1 + temp2) | 0].concat(hash);
+        hash[4] = (hash[4] + temp1) | 0;
+      }
+
+      for (let i = 0; i < 8; i++) {
+        hash[i] = (hash[i] + oldHash[i]) | 0;
+      }
+    }
+
+    for (let i = 0; i < 8; i++) {
+      for (let j = 3; j + 1; j--) {
+        const b = (hash[i] >> (j * 8)) & 255;
+        result += (b < 16 ? 0 : '') + b.toString(16);
+      }
+    }
+    return result;
+  }
+
+  function hashPin(pin) {
+    return sha256Hex(PIN_SALT + String(pin || '').trim());
+  }
+
+  function getActivePinHash() {
+    return localStorage.getItem(STORAGE_KEYS.PIN_HASH) || DEFAULT_PIN_HASH;
+  }
+
+  function checkPinLockState() {
+    const lockScreen = document.getElementById('pin-lock-screen');
+    if (!lockScreen) return;
+    const savedUnlockHash =
+      localStorage.getItem(STORAGE_KEYS.UNLOCKED) || sessionStorage.getItem(STORAGE_KEYS.UNLOCKED);
+    const activeHash = getActivePinHash();
+
+    if (savedUnlockHash && savedUnlockHash === activeHash) {
+      lockScreen.classList.add('hidden');
+    } else {
+      lockScreen.classList.remove('hidden');
+    }
+  }
+
+  function lockApp() {
+    localStorage.removeItem(STORAGE_KEYS.UNLOCKED);
+    sessionStorage.removeItem(STORAGE_KEYS.UNLOCKED);
+    const pinInput = document.getElementById('pin-code-input');
+    if (pinInput) pinInput.value = '';
+    document.getElementById('pin-error-msg')?.classList.add('hidden');
+    document.getElementById('pin-lock-screen')?.classList.remove('hidden');
+    showToast('🔒 Приложение заблокировано');
+  }
+
+  function tryUnlockWithPin() {
+    const pinInput = document.getElementById('pin-code-input');
+    const errorEl = document.getElementById('pin-error-msg');
+    const rememberBox = document.getElementById('pin-remember-checkbox');
+    if (!pinInput) return;
+
+    const enteredHash = hashPin(pinInput.value);
+    const expectedHash = getActivePinHash();
+
+    if (enteredHash === expectedHash) {
+      if (rememberBox && rememberBox.checked) {
+        localStorage.setItem(STORAGE_KEYS.UNLOCKED, expectedHash);
+      } else {
+        sessionStorage.setItem(STORAGE_KEYS.UNLOCKED, expectedHash);
+      }
+      pinInput.value = '';
+      errorEl?.classList.add('hidden');
+      document.getElementById('pin-lock-screen')?.classList.add('hidden');
+      showToast('🔓 Доступ открыт');
+    } else {
+      errorEl?.classList.remove('hidden');
+      pinInput.value = '';
+    }
+  }
+
+  function changePinInSettings() {
+    const oldPinEl = document.getElementById('settings-old-pin');
+    const newPinEl = document.getElementById('settings-new-pin');
+    const oldVal = (oldPinEl?.value || '').trim();
+    const newVal = (newPinEl?.value || '').trim();
+
+    if (hashPin(oldVal) !== getActivePinHash()) {
+      showToast('❌ Текущий PIN-код введён неверно');
+      return;
+    }
+    if (newVal.length < 4) {
+      showToast('Новый PIN должен содержать минимум 4 символа');
+      return;
+    }
+
+    const newHash = hashPin(newVal);
+    localStorage.setItem(STORAGE_KEYS.PIN_HASH, newHash);
+    if (localStorage.getItem(STORAGE_KEYS.UNLOCKED)) {
+      localStorage.setItem(STORAGE_KEYS.UNLOCKED, newHash);
+    }
+    sessionStorage.setItem(STORAGE_KEYS.UNLOCKED, newHash);
+
+    if (oldPinEl) oldPinEl.value = '';
+    if (newPinEl) newPinEl.value = '';
+    showToast('✅ Новый PIN-код сохранён!');
+  }
+
+  function bindPinEvents() {
+    const pinInput = document.getElementById('pin-code-input');
+    const errorEl = document.getElementById('pin-error-msg');
+
+    document.querySelectorAll('#pin-keypad .pin-key[data-digit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (!pinInput) return;
+        errorEl?.classList.add('hidden');
+        if (pinInput.value.length < 8) {
+          pinInput.value += btn.getAttribute('data-digit') || '';
+        }
+      });
+    });
+
+    document.getElementById('btn-pin-clear')?.addEventListener('click', () => {
+      if (pinInput) pinInput.value = '';
+      errorEl?.classList.add('hidden');
+    });
+
+    document.getElementById('btn-pin-backspace')?.addEventListener('click', () => {
+      if (pinInput) pinInput.value = pinInput.value.slice(0, -1);
+      errorEl?.classList.add('hidden');
+    });
+
+    document.getElementById('btn-pin-submit')?.addEventListener('click', tryUnlockWithPin);
+
+    pinInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        tryUnlockWithPin();
+      }
+    });
+
+    document.getElementById('btn-lock-app')?.addEventListener('click', lockApp);
+    document.getElementById('btn-settings-lock-now')?.addEventListener('click', lockApp);
+    document.getElementById('btn-change-pin')?.addEventListener('click', changePinInSettings);
   }
 
   // --- РЕГИСТРАЦИЯ SERVICE WORKER ДЛЯ ОФЛАЙН-РАБОТЫ ---
@@ -1706,6 +1914,7 @@
   // --- ИНИЦИАЛИЗАЦИЯ ---
   function init() {
     initTheme();
+    checkPinLockState();
     loadState();
 
     // Восстанавливаем текст заметки, если таймер был активен
@@ -1715,6 +1924,7 @@
     }
 
     bindEvents();
+    switchWorkMode('manual');
     renderAll();
 
     if (activeTimer.isRunning) {
