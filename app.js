@@ -11,7 +11,7 @@
   };
 
   const DEFAULT_TAGS = [
-    'Tartunnatе',
+    'Tartunnat',
     'Väliseinät',
     'Antura',
     'PV seinät',
