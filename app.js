@@ -11,15 +11,19 @@
   };
 
   const DEFAULT_TAGS = [
-    'Разбивка осей',
-    'Исполнительная съёмка',
-    'Вынос в натуру',
-    'Нивелировка',
-    'Топосъёмка',
-    'Фасадная съёмка',
-    'Посадка здания',
-    'Подсчёт объёмов',
-    'Сдача геодезии'
+    'Tartunnatей',
+    'Väliseinät',
+    'Antura',
+    'PV seinät',
+    'Katto krs ',
+    'Weld',
+    'Kaivot',
+    'Tarket',
+    'Alakatto',
+    'Parvekkeet',
+    'Korko',
+    'Lattia korko',
+    'Talo nurkka',
   ];
 
   // --- СОСТОЯНИЕ ПРИЛОЖЕНИЯ ---
