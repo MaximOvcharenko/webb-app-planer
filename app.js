@@ -1106,7 +1106,7 @@
 
     const totalMins = filtered.reduce((acc, e) => acc + (Number(e.durationMins) || 0), 0);
     const lines = [];
-    lines.push(`📐 ОТЧЁТ ГЕОДЕЗИСТА (${label})`);
+    lines.push(`📐 Часы: (${label})`);
     lines.push('══════════════════════');
 
     if (reportGroupBy === 'date') {
@@ -1120,7 +1120,7 @@
         const wd = workdays[dateISO];
         const wdStr =
           wd && wd.durationMins > 0
-            ? ` — День с дорогой: ${formatDurationHuman(wd.durationMins)} [${wd.startTime}–${wd.endTime}]`
+            ? ` — Часы за день: ${formatDurationHuman(wd.durationMins)} [${wd.startTime}–${wd.endTime}]`
             : '';
         lines.push(`\n📅 ${formatRussianDateTitle(dateISO)}${wdStr}:`);
         list.forEach((e) => {
@@ -1129,7 +1129,7 @@
           const works = [...(e.tags || [])];
           if (e.note) works.push(e.note);
           const worksStr = works.length > 0 ? ` — ${works.join(', ')}` : '';
-          lines.push(`• ${siteTitle}: ${formatDurationHuman(e.durationMins)}${intervalStr}${worksStr}`);
+          lines.push(`• ${siteTitle}: ${formatDurationHuman(e.durationMins)}`);
         });
       }
     } else {
