@@ -1152,8 +1152,6 @@
       }
     }
 
-    lines.push('\n══════════════════════');
-    lines.push(`⏱ ВСЕГО ПО ОБЪЕКТАМ: ${formatDurationClock(totalMins)} (${formatDecimalHours(totalMins)} ч)`);
 
     return lines.join('\n');
   }
