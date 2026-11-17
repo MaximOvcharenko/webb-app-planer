@@ -217,15 +217,45 @@
 
         <!-- Кнопка сохранения для ручного режима -->
         <button type="button" class="btn btn-save-manual" id="btn-save-manual">
-          💾 СОХРАНИТЬ ЗАПИСЬ
+          💾 СОХРАНИТЬ ЗАПИСЬ ОБЪЕКТА
         </button>
       </div>
 
-      <!-- СВОДКА ЗА СЕГОДНЯ -->
+      <!-- БЛОК: ОБЩЕЕ РАБОЧЕЕ ВРЕМЯ ЗА ДЕНЬ С ДОРОГОЙ -->
+      <div class="card workday-card mt-12" id="workday-card">
+        <div class="section-header">
+          <div>
+            <span class="section-label">🚗 Рабочий день (с учётом дороги)</span>
+            <div class="workday-date-sub" id="workday-date-label">За сегодня</div>
+          </div>
+          <span class="entry-duration-badge" id="workday-total-badge">0 ч 00 м</span>
+        </div>
+
+        <div class="duration-inputs-row mt-8">
+          <div class="input-group">
+            <label for="workday-start-time">Начало дня (С)</label>
+            <input type="time" class="input-field text-center" id="workday-start-time" value="07:00" />
+          </div>
+          <div class="input-group">
+            <label for="workday-end-time">Конец дня (До)</label>
+            <input type="time" class="input-field text-center" id="workday-end-time" value="15:30" />
+          </div>
+        </div>
+
+        <div class="workday-actions mt-10">
+          <button type="button" class="btn btn-primary btn-sm w-full" id="btn-save-workday">
+            ✓ Сохранить общее время дня
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm hidden" id="btn-clear-workday" title="Очистить время дня">
+            ✕
+          </button>
+        </div>
+      </div>
+
+      <!-- СВОДКА ЗА СЕГОДНЯ ПО ОБЪЕКТАМ -->
       <div class="today-section">
         <div class="section-title-row">
-          <h2 class="section-heading">Выезды за сегодня</h2>
-          <span class="subtle-count" id="today-entries-count">0 выездов</span>
+          <h2 class="section-heading">Объекты за сегодня</h2>
         </div>
         <div id="today-entries-list" class="entries-list"></div>
       </div>
@@ -265,19 +295,9 @@
         <!-- Статистика за выбранный период -->
         <div class="stats-grid mt-12">
           <div class="stat-box highlight">
-            <span class="stat-label">Всего времени</span>
+            <span class="stat-label">Всего времени за период</span>
             <strong class="stat-value" id="stat-total-time">0 ч 00 м</strong>
             <span class="stat-sub" id="stat-total-decimal">0.0 ч</span>
-          </div>
-          <div class="stat-box">
-            <span class="stat-label">Выездов</span>
-            <strong class="stat-value" id="stat-total-visits">0</strong>
-            <span class="stat-sub">записей</span>
-          </div>
-          <div class="stat-box">
-            <span class="stat-label">Объектов</span>
-            <strong class="stat-value" id="stat-total-sites">0</strong>
-            <span class="stat-sub">в работе</span>
           </div>
         </div>
 
@@ -304,7 +324,6 @@
       <div class="mt-14">
         <div class="section-title-row">
           <h2 class="section-heading">Записи за период</h2>
-          <span class="subtle-count" id="history-entries-count">0 записей</span>
         </div>
         <div id="history-entries-list" class="entries-list"></div>
       </div>

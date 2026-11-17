@@ -6,13 +6,10 @@
     SITES: 'geojournal_sites_v1',
     TAGS: 'geojournal_tags_v1',
     ENTRIES: 'geojournal_entries_v1',
+    WORKDAYS: 'geojournal_workdays_v1',
     TIMER: 'geojournal_active_timer_v1',
     THEME: 'geojournal_theme_v1'
   };
-
-  // Зашифрованный отпечаток (SHA-256 с солью) стартового PIN-кода
-  const PIN_SALT = 'geojournal_salt_v1:';
-  const DEFAULT_PIN_HASH = 'a328bb84f4daaa4c8386413182ed030c39b73c1fe678a52564d32d9274a348d9';
 
   const DEFAULT_TAGS = [
     'Tartunnat',
@@ -35,6 +32,7 @@
   let sites = [];
   let tags = [];
   let entries = [];
+  let workdays = {}; // { 'YYYY-MM-DD': { startTime: '07:00', endTime: '15:30', durationMins: 510 } }
   let activeTimer = {
     isRunning: false,
     startTimestamp: null,
@@ -176,6 +174,13 @@
     }
 
     try {
+      const rawWorkdays = localStorage.getItem(STORAGE_KEYS.WORKDAYS);
+      workdays = rawWorkdays ? JSON.parse(rawWorkdays) : {};
+    } catch {
+      workdays = {};
+    }
+
+    try {
       const rawTimer = localStorage.getItem(STORAGE_KEYS.TIMER);
       if (rawTimer) {
         const parsed = JSON.parse(rawTimer);
@@ -212,6 +217,10 @@
 
   function saveEntries() {
     localStorage.setItem(STORAGE_KEYS.ENTRIES, JSON.stringify(entries));
+  }
+
+  function saveWorkdays() {
+    localStorage.setItem(STORAGE_KEYS.WORKDAYS, JSON.stringify(workdays));
   }
 
   function saveActiveTimer() {
@@ -262,7 +271,7 @@
     }, 2800);
   }
 
-  // --- ШАПКА И СВОДКА ЗА СЕГОДНЯ ---
+  // --- ШАПКА И РАБОЧИЙ ДЕНЬ С ДОРОГОЙ ---
   function updateHeader() {
     const now = new Date();
     const dateLabel = document.getElementById('header-date-label');
@@ -275,14 +284,122 @@
     }
 
     const todayISO = getTodayISO();
-    const todayMins = entries
-      .filter((e) => e.date === todayISO)
-      .reduce((acc, e) => acc + (Number(e.durationMins) || 0), 0);
+    const todayWorkday = workdays[todayISO];
+    const todayMins = todayWorkday ? Number(todayWorkday.durationMins) || 0 : 0;
 
     const todayTotalEl = document.getElementById('header-today-total');
     if (todayTotalEl) {
       todayTotalEl.textContent = formatDurationClock(todayMins);
     }
+  }
+
+  function getActiveWorkdayDateISO() {
+    return document.getElementById('manual-date-input')?.value || getTodayISO();
+  }
+
+  function renderWorkdayCard() {
+    const dateISO = getActiveWorkdayDateISO();
+    const dateSubEl = document.getElementById('workday-date-label');
+    const badgeEl = document.getElementById('workday-total-badge');
+    const startInput = document.getElementById('workday-start-time');
+    const endInput = document.getElementById('workday-end-time');
+    const clearBtn = document.getElementById('btn-clear-workday');
+
+    if (dateSubEl) {
+      dateSubEl.textContent = formatRussianDateTitle(dateISO);
+    }
+
+    const saved = workdays[dateISO];
+    if (saved && saved.durationMins > 0) {
+      if (startInput && document.activeElement !== startInput) startInput.value = saved.startTime || '07:00';
+      if (endInput && document.activeElement !== endInput) endInput.value = saved.endTime || '15:30';
+      if (badgeEl) badgeEl.textContent = formatDurationHuman(saved.durationMins);
+      clearBtn?.classList.remove('hidden');
+    } else {
+      const s = startInput?.value || '07:00';
+      const e = endInput?.value || '15:30';
+      const previewMins = calcMinutesBetweenTimes(s, e);
+      if (badgeEl) badgeEl.textContent = `Не указано (${formatDurationHuman(previewMins)})`;
+      clearBtn?.classList.add('hidden');
+    }
+  }
+
+  function saveWorkdayForActiveDate() {
+    const dateISO = getActiveWorkdayDateISO();
+    const startTime = document.getElementById('workday-start-time')?.value || '';
+    const endTime = document.getElementById('workday-end-time')?.value || '';
+    const durationMins = calcMinutesBetweenTimes(startTime, endTime);
+
+    if (durationMins <= 0) {
+      showToast('Укажите корректное время начала и конца дня');
+      return;
+    }
+
+    workdays[dateISO] = {
+      startTime,
+      endTime,
+      durationMins
+    };
+    saveWorkdays();
+    renderAll();
+    showToast(`✅ Рабочий день (${formatRussianDateTitle(dateISO)}): ${formatDurationHuman(durationMins)}`);
+  }
+
+  function clearWorkdayForActiveDate() {
+    const dateISO = getActiveWorkdayDateISO();
+    if (workdays[dateISO]) {
+      delete workdays[dateISO];
+      saveWorkdays();
+      renderAll();
+      showToast('Время рабочего дня очищено');
+    }
+  }
+
+  function promptEditWorkdayForDate(dateISO) {
+    const existing = workdays[dateISO];
+    const defaultVal = existing && existing.startTime && existing.endTime
+      ? `${existing.startTime}-${existing.endTime}`
+      : '07:00-15:30';
+
+    const input = window.prompt(
+      `Общее время рабочего дня с дорогой (${formatRussianDateTitle(dateISO)})\nВведите интервал ЧЧ:ММ-ЧЧ:ММ (или оставьте пустым для удаления):`,
+      defaultVal
+    );
+    if (input === null) return;
+
+    const trimmed = input.trim();
+    if (!trimmed) {
+      delete workdays[dateISO];
+      saveWorkdays();
+      renderAll();
+      showToast('Время рабочего дня удалено');
+      return;
+    }
+
+    const match = trimmed.match(/^(\d{1,2}:\d{2})\s*[-–—\s]\s*(\d{1,2}:\d{2})$/);
+    if (!match) {
+      showToast('Формат: 07:00-15:30');
+      return;
+    }
+
+    const padTime = (t) => {
+      const [h, m] = t.split(':').map(Number);
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    };
+
+    const startTime = padTime(match[1]);
+    const endTime = padTime(match[2]);
+    const durationMins = calcMinutesBetweenTimes(startTime, endTime);
+
+    if (durationMins <= 0) {
+      showToast('Некорректный интервал времени');
+      return;
+    }
+
+    workdays[dateISO] = { startTime, endTime, durationMins };
+    saveWorkdays();
+    renderAll();
+    showToast(`✅ День с дорогой: ${formatDurationHuman(durationMins)}`);
   }
 
   // --- РЕНДЕР ОБЪЕКТОВ (БЫСТРЫЕ КНОПКИ) ---
@@ -464,13 +581,19 @@
     }
   }
 
+  function roundUpToHalfHour(mins) {
+    const raw = Math.max(1, Math.ceil(Number(mins) || 0));
+    return Math.ceil(raw / 30) * 30;
+  }
+
   function openStopTimerModal() {
     if (!activeTimer.isRunning || !activeTimer.startTimestamp) return;
 
     const startDate = new Date(activeTimer.startTimestamp);
     const endDate = new Date();
     const diffMs = Math.max(60000, endDate.getTime() - startDate.getTime()); // минимум 1 минута
-    const totalMins = Math.round(diffMs / 60000);
+    const rawMins = Math.ceil(diffMs / 60000);
+    const totalMins = roundUpToHalfHour(rawMins);
 
     const noteEl = document.getElementById('work-note-input');
     const currentNote = noteEl ? noteEl.value.trim() : activeTimer.note;
@@ -880,17 +1003,12 @@
 
     const filtered = getFilteredEntries();
     const totalMins = filtered.reduce((acc, e) => acc + (Number(e.durationMins) || 0), 0);
-    const uniqueSitesCount = new Set(filtered.map((e) => e.siteId || e.siteName)).size;
 
     const statTime = document.getElementById('stat-total-time');
     const statDec = document.getElementById('stat-total-decimal');
-    const statVisits = document.getElementById('stat-total-visits');
-    const statSites = document.getElementById('stat-total-sites');
 
     if (statTime) statTime.textContent = formatDurationClock(totalMins);
     if (statDec) statDec.textContent = `${formatDecimalHours(totalMins)} ч`;
-    if (statVisits) statVisits.textContent = String(filtered.length);
-    if (statSites) statSites.textContent = String(uniqueSitesCount);
 
     // Сводка распределения по объектам
     const breakdownCard = document.getElementById('period-sites-breakdown-card');
@@ -903,9 +1021,8 @@
         const mapBySite = new Map();
         filtered.forEach((e) => {
           const title = getSiteNameById(e.siteId, e.siteName);
-          const cur = mapBySite.get(title) || { mins: 0, visits: 0 };
+          const cur = mapBySite.get(title) || { mins: 0 };
           cur.mins += Number(e.durationMins) || 0;
-          cur.visits += 1;
           mapBySite.set(title, cur);
         });
 
@@ -916,7 +1033,7 @@
             return `
               <div class="breakdown-item">
                 <div class="breakdown-top">
-                  <span>🏗️ ${escapeHtml(siteTitle)} <small style="color:var(--text-muted)">(${info.visits})</small></span>
+                  <span>🏗️ ${escapeHtml(siteTitle)}</span>
                   <span>${formatDurationHuman(info.mins)}</span>
                 </div>
                 <div class="breakdown-bar-wrap">
@@ -930,11 +1047,6 @@
     }
 
     // Список записей, сгруппированный по дням
-    const countEl = document.getElementById('history-entries-count');
-    if (countEl) {
-      countEl.textContent = `${filtered.length} ${pluralize(filtered.length, 'запись', 'записи', 'записей')}`;
-    }
-
     const listContainer = document.getElementById('history-entries-list');
     if (!listContainer) return;
 
@@ -955,21 +1067,36 @@
 
     let html = '';
     for (const [dateISO, dayEntries] of groupedByDate.entries()) {
-      const dayMins = dayEntries.reduce((s, e) => s + (Number(e.durationMins) || 0), 0);
+      const wd = workdays[dateISO];
+      const dayShiftHTML =
+        wd && wd.durationMins > 0
+          ? `<button type="button" class="day-shift-pill" data-workday-date="${escapeHtml(dateISO)}" title="Изменить общее время дня с дорогой">
+               🚗 День с дорогой: ${formatDurationHuman(wd.durationMins)} (${escapeHtml(wd.startTime)}–${escapeHtml(wd.endTime)}) ✏️
+             </button>`
+          : `<button type="button" class="day-shift-pill" data-workday-date="${escapeHtml(dateISO)}" title="Указать общее время дня с дорогой">
+               + День с дорогой ✏️
+             </button>`;
+
       html += `
         <div class="date-group-header">
           <span>📅 ${escapeHtml(formatRussianDateTitle(dateISO))}</span>
-          <span>Итого: ${formatDurationHuman(dayMins)}</span>
+          ${dayShiftHTML}
         </div>
       `;
       html += dayEntries.map((e) => renderEntryCardHTML(e)).join('');
     }
 
     listContainer.innerHTML = html;
+    listContainer.querySelectorAll('.day-shift-pill').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const d = btn.getAttribute('data-workday-date');
+        if (d) promptEditWorkdayForDate(d);
+      });
+    });
     bindEntryCardActions(listContainer);
   }
 
-  // --- ГЕНЕРАЦИЯ ТЕКСТОВОГО ОТЧЁТА ДЛЯ WHATSAPP / TELEGRAM ---
+  // --- ГЕНЕРАЦИЯ ТЕКСТОВОГО ОТЧЁТ ДЛЯ WHATSAPP / TELEGRAM ---
   function generateTextReport() {
     const filtered = getFilteredEntries();
     const { label } = getPeriodDateRange();
@@ -990,8 +1117,12 @@
       });
 
       for (const [dateISO, list] of byDate.entries()) {
-        const dayMins = list.reduce((s, e) => s + (Number(e.durationMins) || 0), 0);
-        lines.push(`\n📅 ${formatRussianDateTitle(dateISO)} (${formatDurationHuman(dayMins)}):`);
+        const wd = workdays[dateISO];
+        const wdStr =
+          wd && wd.durationMins > 0
+            ? ` — День с дорогой: ${formatDurationHuman(wd.durationMins)} [${wd.startTime}–${wd.endTime}]`
+            : '';
+        lines.push(`\n📅 ${formatRussianDateTitle(dateISO)}${wdStr}:`);
         list.forEach((e) => {
           const siteTitle = getSiteNameById(e.siteId, e.siteName);
           const intervalStr = e.startTime && e.endTime ? ` [${e.startTime}–${e.endTime}]` : '';
@@ -1011,7 +1142,7 @@
 
       for (const [siteTitle, list] of bySite.entries()) {
         const siteMins = list.reduce((s, e) => s + (Number(e.durationMins) || 0), 0);
-        lines.push(`\n🏗️ ${siteTitle} — всего ${formatDurationHuman(siteMins)} (${list.length} выезд.):`);
+        lines.push(`\n🏗️ ${siteTitle} — всего ${formatDurationHuman(siteMins)}:`);
         list.forEach((e) => {
           const works = [...(e.tags || [])];
           if (e.note) works.push(e.note);
@@ -1022,8 +1153,7 @@
     }
 
     lines.push('\n══════════════════════');
-    lines.push(`⏱ ВСЕГО ЧАСОВ: ${formatDurationClock(totalMins)} (${formatDecimalHours(totalMins)} ч)`);
-    lines.push(`🚗 Выездов: ${filtered.length}`);
+    lines.push(`⏱ ВСЕГО ПО ОБЪЕКТАМ: ${formatDurationClock(totalMins)} (${formatDecimalHours(totalMins)} ч)`);
 
     return lines.join('\n');
   }
@@ -1061,12 +1191,13 @@
 
     const headers = [
       'Дата',
+      'День с дорогой (ЧЧ:ММ)',
       'Объект',
       'Примечание к объекту',
       'Приезд (С)',
       'Отъезд (До)',
-      'Время (ЧЧ:ММ)',
-      'Часы (десятичные)',
+      'Время на объекте (ЧЧ:ММ)',
+      'Часы на объекте (десятичные)',
       'Виды работ',
       'Комментарий'
     ];
@@ -1085,9 +1216,12 @@
       const siteNote = siteObj ? (siteObj.note || '') : '';
       const decimalHours = formatDecimalHours(e.durationMins).replace('.', ',');
       const worksStr = Array.isArray(e.tags) ? e.tags.join(', ') : '';
+      const wd = workdays[e.date];
+      const wdStr = wd && wd.durationMins > 0 ? formatDurationHHMM(wd.durationMins) : '';
 
       return [
         e.date,
+        wdStr,
         siteTitle,
         siteNote,
         e.startTime || '',
@@ -1106,7 +1240,8 @@
     rows.push(
       [
         'ИТОГО',
-        `Выездов: ${filtered.length}`,
+        '',
+        '',
         '',
         '',
         '',
@@ -1297,11 +1432,12 @@
   // --- РЕЗЕРВНОЕ КОПИРОВАНИЕ (JSON) ---
   function exportBackupJSON() {
     const backup = {
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       sites,
       tags,
-      entries
+      entries,
+      workdays
     };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1328,10 +1464,12 @@
         if (Array.isArray(parsed.sites)) sites = parsed.sites;
         if (Array.isArray(parsed.tags)) tags = parsed.tags;
         if (Array.isArray(parsed.entries)) entries = parsed.entries;
+        if (parsed.workdays && typeof parsed.workdays === 'object') workdays = parsed.workdays;
 
         saveSites();
         saveTags();
         saveEntries();
+        saveWorkdays();
         if (sites.length > 0 && !selectedSiteId) {
           selectedSiteId = sites[0].id;
         }
@@ -1408,6 +1546,7 @@
     renderQuickSiteChips();
     renderWorkTags();
     updateTimerUI();
+    renderWorkdayCard();
     renderTodayEntries();
     renderHistoryTab();
     renderDirectoryTab();
@@ -1511,11 +1650,15 @@
     const manualDateInput = document.getElementById('manual-date-input');
     if (manualDateInput) {
       manualDateInput.value = getTodayISO();
+      manualDateInput.addEventListener('change', () => {
+        renderWorkdayCard();
+      });
     }
     document.getElementById('btn-date-today')?.addEventListener('click', () => {
       if (manualDateInput) manualDateInput.value = getTodayISO();
       document.getElementById('btn-date-today')?.classList.add('active');
       document.getElementById('btn-date-yesterday')?.classList.remove('active');
+      renderWorkdayCard();
     });
     document.getElementById('btn-date-yesterday')?.addEventListener('click', () => {
       const y = new Date();
@@ -1523,7 +1666,24 @@
       if (manualDateInput) manualDateInput.value = formatDateISO(y);
       document.getElementById('btn-date-yesterday')?.classList.add('active');
       document.getElementById('btn-date-today')?.classList.remove('active');
+      renderWorkdayCard();
     });
+
+    // Блок общего рабочего дня с дорогой
+    document.getElementById('workday-start-time')?.addEventListener('input', () => {
+      const s = document.getElementById('workday-start-time')?.value || '07:00';
+      const e = document.getElementById('workday-end-time')?.value || '15:30';
+      const badgeEl = document.getElementById('workday-total-badge');
+      if (badgeEl) badgeEl.textContent = formatDurationHuman(calcMinutesBetweenTimes(s, e));
+    });
+    document.getElementById('workday-end-time')?.addEventListener('input', () => {
+      const s = document.getElementById('workday-start-time')?.value || '07:00';
+      const e = document.getElementById('workday-end-time')?.value || '15:30';
+      const badgeEl = document.getElementById('workday-total-badge');
+      if (badgeEl) badgeEl.textContent = formatDurationHuman(calcMinutesBetweenTimes(s, e));
+    });
+    document.getElementById('btn-save-workday')?.addEventListener('click', saveWorkdayForActiveDate);
+    document.getElementById('btn-clear-workday')?.addEventListener('click', clearWorkdayForActiveDate);
 
     // Подрежим ручного ввода: Длительность / Интервал С—До
     document.getElementById('subtab-duration')?.addEventListener('click', () => {
@@ -1594,7 +1754,8 @@
       const s = document.getElementById('modal-start-time')?.value;
       const e = document.getElementById('modal-end-time')?.value;
       if (s && e) {
-        const mins = calcMinutesBetweenTimes(s, e);
+        const rawMins = calcMinutesBetweenTimes(s, e);
+        const mins = modalMode === 'finish-timer' ? roundUpToHalfHour(rawMins) : rawMins;
         document.getElementById('modal-hours-input').value = Math.floor(mins / 60);
         document.getElementById('modal-mins-input').value = mins % 60;
       }

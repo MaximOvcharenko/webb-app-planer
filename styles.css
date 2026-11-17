@@ -407,15 +407,32 @@ body {
 /* Поля ввода */
 .input-field {
   width: 100%;
-  min-height: 46px;
-  padding: 10px 12px;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 9px 12px;
   border-radius: 11px;
   border: 1.5px solid var(--border-color);
   background: var(--bg-input);
   color: var(--text-main);
-  font-size: 1rem;
+  font-size: 0.96rem;
   font-family: inherit;
   outline: none;
+  box-sizing: border-box;
+}
+
+input[type="date"].input-field,
+input[type="time"].input-field {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  height: 40px;
+  padding: 6px 10px;
+  font-size: 0.92rem;
 }
 
 .input-field:focus {
@@ -662,10 +679,25 @@ body {
   color: var(--accent);
 }
 
+.manual-date-row {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .duration-inputs-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+}
+
+.input-group {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .input-group label {
@@ -722,6 +754,23 @@ body {
   color: var(--info);
 }
 
+/* Карточка общего рабочего дня с дорогой */
+.workday-card {
+  border-color: rgba(249, 115, 22, 0.45);
+}
+
+.workday-date-sub {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.workday-actions {
+  display: flex;
+  gap: 8px;
+}
+
 /* Списки записей */
 .today-section {
   margin-top: 18px;
@@ -756,7 +805,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
   background: var(--bg-card-elevated);
   border-radius: 10px;
   font-size: 0.86rem;
@@ -764,6 +815,20 @@ body {
   color: var(--text-secondary);
   border-left: 4px solid var(--accent);
   margin-top: 4px;
+}
+
+.day-shift-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--accent);
+  padding: 4px 9px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .entry-card {
@@ -885,13 +950,15 @@ body {
 
 .custom-dates-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
 }
 
 .stats-grid {
   display: grid;
-  grid-template-columns: 1.3fr 0.85fr 0.85fr;
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
