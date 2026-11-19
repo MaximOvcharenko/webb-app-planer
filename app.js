@@ -26,6 +26,7 @@
     'Lattia korko',
     'Talo nurkka',
     'Elementit',
+    'Обед',
   ];
 
   // --- СОСТОЯНИЕ ПРИЛОЖЕНИЯ ---
@@ -1096,18 +1097,36 @@
     bindEntryCardActions(listContainer);
   }
 
-  // --- ГЕНЕРАЦИЯ ТЕКСТОВОГО ОТЧЁТ ДЛЯ WHATSAPP / TELEGRAM ---
+  function formatReportDate(isoDate) {
+    if (!isoDate) return '';
+    const [y, m, d] = isoDate.split('-').map(Number);
+    const dateObj = new Date(y, m - 1, d);
+    const weekday = dateObj.toLocaleDateString('ru-RU', { weekday: 'short' });
+    return `${String(d).padStart(2, '0')}.${String(m).padStart(2, '0')}.${y} (${weekday})`;
+  }
+
+  function isLunchTag(tag) {
+    const normalized = String(tag || '').trim().toLowerCase();
+    return normalized === 'обед' || normalized === 'lounas';
+  }
+
+  function getReportEntryAdjusted(entry) {
+    const rawTags = Array.isArray(entry.tags) ? entry.tags : [];
+    const hasLunch = rawTags.some(isLunchTag);
+    const visibleTags = rawTags.filter((t) => !isLunchTag(t));
+    const rawMins = Number(entry.durationMins) || 0;
+    const adjustedMins = hasLunch ? Math.max(0, rawMins - 30) : rawMins;
+    return { hasLunch, visibleTags, adjustedMins };
+  }
+
+  // --- ГЕНЕРАЦИЯ ТЕКСТОВОГО ОТЧЁТА ДЛЯ WHATSAPP / TELEGRAM ---
   function generateTextReport() {
     const filtered = getFilteredEntries();
-    const { label } = getPeriodDateRange();
     if (filtered.length === 0) {
       return 'За выбранный период записей нет.';
     }
 
-    const totalMins = filtered.reduce((acc, e) => acc + (Number(e.durationMins) || 0), 0);
     const lines = [];
-    lines.push(`📐 Часы: (${label})`);
-    lines.push('══════════════════════');
 
     if (reportGroupBy === 'date') {
       const byDate = new Map();
@@ -1116,21 +1135,47 @@
         byDate.get(e.date).push(e);
       });
 
+      let firstDay = true;
       for (const [dateISO, list] of byDate.entries()) {
-        const wd = workdays[dateISO];
-        const wdStr =
-          wd && wd.durationMins > 0
-            ? ` — Часы за день: ${formatDurationHuman(wd.durationMins)} [${wd.startTime}–${wd.endTime}]`
-            : '';
-        lines.push(`\n📅 ${formatRussianDateTitle(dateISO)}${wdStr}:`);
+        if (!firstDay) lines.push('');
+        firstDay = false;
+
+        let entriesDayMins = 0;
+
+        // Группируем по объектам внутри дня (сколько часов на каждом объекте за день + что делал)
+        const bySiteInDay = new Map();
         list.forEach((e) => {
+          const { visibleTags, adjustedMins } = getReportEntryAdjusted(e);
+          entriesDayMins += adjustedMins;
+
           const siteTitle = getSiteNameById(e.siteId, e.siteName);
-          const intervalStr = e.startTime && e.endTime ? ` [${e.startTime}–${e.endTime}]` : '';
-          const works = [...(e.tags || [])];
-          if (e.note) works.push(e.note);
-          const worksStr = works.length > 0 ? ` — ${works.join(', ')}` : '';
-          lines.push(`• ${siteTitle}: ${formatDurationHuman(e.durationMins)}`);
+          if (!bySiteInDay.has(siteTitle)) {
+            bySiteInDay.set(siteTitle, { mins: 0, works: [] });
+          }
+          const rec = bySiteInDay.get(siteTitle);
+          rec.mins += adjustedMins;
+          visibleTags.forEach((t) => {
+            if (t && !rec.works.includes(t)) rec.works.push(t);
+          });
+          if (e.note && e.note.trim()) {
+            rec.works.push(e.note.trim());
+          }
         });
+
+        const wd = workdays[dateISO];
+        const dayTotalMins = wd && wd.durationMins > 0 ? wd.durationMins : entriesDayMins;
+        const intervalInfo =
+          wd && wd.durationMins > 0 && wd.startTime && wd.endTime
+            ? ` (${wd.startTime}–${wd.endTime})`
+            : '';
+
+        lines.push(`📅 ${formatReportDate(dateISO)}`);
+        lines.push(`Всего за день: ${formatDurationHuman(dayTotalMins)}${intervalInfo}`);
+
+        for (const [siteTitle, info] of bySiteInDay.entries()) {
+          const worksStr = info.works.length > 0 ? ` — ${info.works.join(', ')}` : '';
+          lines.push(`• ${siteTitle}: ${formatDurationHuman(info.mins)}${worksStr}`);
+        }
       }
     } else {
       const bySite = new Map();
@@ -1140,18 +1185,22 @@
         bySite.get(siteTitle).push(e);
       });
 
+      let firstSite = true;
       for (const [siteTitle, list] of bySite.entries()) {
-        const siteMins = list.reduce((s, e) => s + (Number(e.durationMins) || 0), 0);
-        lines.push(`\n🏗️ ${siteTitle} — всего ${formatDurationHuman(siteMins)}:`);
+        if (!firstSite) lines.push('');
+        firstSite = false;
+
+        const siteMins = list.reduce((s, e) => s + getReportEntryAdjusted(e).adjustedMins, 0);
+        lines.push(`🏗️ ${siteTitle} — всего ${formatDurationHuman(siteMins)}:`);
         list.forEach((e) => {
-          const works = [...(e.tags || [])];
-          if (e.note) works.push(e.note);
-          const worksStr = works.length > 0 ? `: ${works.join(', ')}` : '';
-          lines.push(`• ${e.date} (${formatDurationHuman(e.durationMins)})${worksStr}`);
+          const { visibleTags, adjustedMins } = getReportEntryAdjusted(e);
+          const works = [...visibleTags];
+          if (e.note && e.note.trim()) works.push(e.note.trim());
+          const worksStr = works.length > 0 ? ` — ${works.join(', ')}` : '';
+          lines.push(`• ${formatReportDate(e.date)}: ${formatDurationHuman(adjustedMins)}${worksStr}`);
         });
       }
     }
-
 
     return lines.join('\n');
   }
