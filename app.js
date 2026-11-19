@@ -33,7 +33,7 @@
   let sites = [];
   let tags = [];
   let entries = [];
-  let workdays = {}; // { 'YYYY-MM-DD': { startTime: '07:00', endTime: '15:30', durationMins: 510 } }
+  let workdays = {}; // { 'YYYY-MM-DD': { startTime, endTime, durationMins, km, routeSummary } }
   let activeTimer = {
     isRunning: false,
     startTimestamp: null,
@@ -294,6 +294,215 @@
     }
   }
 
+  function formatKm(km) {
+    const num = Number(km);
+    if (!Number.isFinite(num) || num <= 0) return '0 км';
+    const rounded = Math.round(num * 10) / 10;
+    return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} км`;
+  }
+
+  // --- ГЕОКОДИНГ АДРЕСА (OpenStreetMap Nominatim + Photon, без GPS) ---
+  async function geocodeAddress(address) {
+    const q = String(address || '').trim();
+    if (!q) return null;
+
+    // 1. OpenStreetMap Nominatim
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`;
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          const lat = parseFloat(data[0].lat);
+          const lon = parseFloat(data[0].lon);
+          if (Number.isFinite(lat) && Number.isFinite(lon)) {
+            return { lat, lon, displayName: data[0].display_name || q };
+          }
+        }
+      }
+    } catch {
+      // fallback below
+    }
+
+    // 2. Fallback: Photon (OpenStreetMap)
+    try {
+      const url = `https://photon.komoot.io/api/?limit=1&q=${encodeURIComponent(q)}`;
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (res.ok) {
+        const data = await res.json();
+        const feat = data?.features?.[0];
+        if (feat?.geometry?.coordinates?.length >= 2) {
+          const lon = Number(feat.geometry.coordinates[0]);
+          const lat = Number(feat.geometry.coordinates[1]);
+          if (Number.isFinite(lat) && Number.isFinite(lon)) {
+            return { lat, lon, displayName: feat.properties?.name || q };
+          }
+        }
+      }
+    } catch {
+      // offline or blocked
+    }
+
+    return null;
+  }
+
+  // --- РАСЧЁТ КИЛОМЕТРОВ ПО ДОРОГАМ (OSRM) ---
+  async function fetchDrivingRouteOSRM(waypoints) {
+    // Убираем подряд идущие одинаковые точки (если 2 записи на одном объекте подряд)
+    const compact = [];
+    for (const wp of waypoints) {
+      const prev = compact[compact.length - 1];
+      if (
+        prev &&
+        Math.abs(prev.lat - wp.lat) < 0.0001 &&
+        Math.abs(prev.lon - wp.lon) < 0.0001
+      ) {
+        continue;
+      }
+      compact.push(wp);
+    }
+
+    if (compact.length < 2) {
+      return { km: 0, summary: 'Недостаточно разных точек с адресами для маршрута (нужно минимум 2).' };
+    }
+
+    const coordsStr = compact.map((wp) => `${wp.lon},${wp.lat}`).join(';');
+    const url = `https://router.project-osrm.org/route/v1/driving/${coordsStr}?overview=false`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error('OSRM error');
+    }
+    const data = await res.json();
+    const route = data?.routes?.[0];
+    if (!route || typeof route.distance !== 'number') {
+      throw new Error('No route found');
+    }
+
+    const totalKm = Math.round((route.distance / 1000) * 10) / 10;
+    const legs = Array.isArray(route.legs) ? route.legs : [];
+    const parts = [compact[0].name];
+    for (let i = 0; i < legs.length && i + 1 < compact.length; i++) {
+      const legKm = Math.round(((legs[i].distance || 0) / 1000) * 10) / 10;
+      parts.push(`→ ${compact[i + 1].name} (${legKm} км)`);
+    }
+
+    return {
+      km: totalKm,
+      summary: parts.join(' ')
+    };
+  }
+
+  function getOrderedDayEntries(dateISO) {
+    return entries
+      .filter((e) => e.date === dateISO)
+      .sort((a, b) => {
+        const oa = typeof a.sortOrder === 'number' ? a.sortOrder : (a.createdAt || 0);
+        const ob = typeof b.sortOrder === 'number' ? b.sortOrder : (b.createdAt || 0);
+        return oa - ob;
+      });
+  }
+
+  function moveEntryOrder(entryId, direction) {
+    const target = entries.find((e) => e.id === entryId);
+    if (!target) return;
+    const dayList = getOrderedDayEntries(target.date);
+    const idx = dayList.findIndex((e) => e.id === entryId);
+    const swapIdx = idx + direction;
+    if (idx === -1 || swapIdx < 0 || swapIdx >= dayList.length) return;
+
+    // Нормализуем sortOrder для всех записей этого дня и меняем местами
+    dayList.forEach((item, i) => {
+      item.sortOrder = i + 1;
+    });
+    const tmp = dayList[idx].sortOrder;
+    dayList[idx].sortOrder = dayList[swapIdx].sortOrder;
+    dayList[swapIdx].sortOrder = tmp;
+
+    saveEntries();
+    renderAll();
+  }
+
+  async function calculateDayKilometers(dateISO) {
+    const btn = document.getElementById('btn-calc-workday-km');
+    const prevText = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '⏳ Считаю...';
+    }
+
+    try {
+      const dayEntries = getOrderedDayEntries(dateISO);
+      if (dayEntries.length === 0) {
+        showToast('Сначала добавьте хотя бы один объект за этот день');
+        return;
+      }
+
+      const waypoints = [];
+      const missingAddresses = [];
+
+      // Объекты дня по порядку
+      for (const entry of dayEntries) {
+        const site = sites.find((s) => s.id === entry.siteId);
+        if (!site) continue;
+
+        const addrQuery = (site.address || '').trim();
+        if (typeof site.lat !== 'number' || typeof site.lon !== 'number') {
+          if (addrQuery) {
+            const geo = await geocodeAddress(addrQuery);
+            if (geo) {
+              site.lat = geo.lat;
+              site.lon = geo.lon;
+              saveSites();
+            }
+          }
+        }
+
+        if (typeof site.lat === 'number' && typeof site.lon === 'number') {
+          waypoints.push({ name: site.name, lat: site.lat, lon: site.lon });
+        } else if (!missingAddresses.includes(site.name)) {
+          missingAddresses.push(site.name);
+        }
+      }
+
+      if (waypoints.length < 2) {
+        if (missingAddresses.length > 0) {
+          showToast(`Укажите адрес на вкладке «Объекты» для: ${missingAddresses.join(', ')}`);
+        } else {
+          showToast('Нужно минимум 2 разных объекта с адресами за день');
+        }
+        return;
+      }
+
+      const result = await fetchDrivingRouteOSRM(waypoints);
+      const startTime = document.getElementById('workday-start-time')?.value || workdays[dateISO]?.startTime || '07:00';
+      const endTime = document.getElementById('workday-end-time')?.value || workdays[dateISO]?.endTime || '15:30';
+      const existingDuration = workdays[dateISO]?.durationMins || calcMinutesBetweenTimes(startTime, endTime);
+
+      workdays[dateISO] = {
+        startTime,
+        endTime,
+        durationMins: existingDuration,
+        km: result.km,
+        routeSummary: result.summary
+      };
+      saveWorkdays();
+      renderAll();
+
+      if (missingAddresses.length > 0) {
+        showToast(`🗺️ ${formatKm(result.km)} (без адреса пропущены: ${missingAddresses.join(', ')})`);
+      } else {
+        showToast(`🗺️ Посчитано по дорогам: ${formatKm(result.km)}`);
+      }
+    } catch {
+      showToast('❌ Не удалось рассчитать маршрут (проверьте интернет или введите км вручную)');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = prevText || '🗺️ Посчитать км';
+      }
+    }
+  }
+
   function getActiveWorkdayDateISO() {
     return document.getElementById('manual-date-input')?.value || getTodayISO();
   }
@@ -304,6 +513,8 @@
     const badgeEl = document.getElementById('workday-total-badge');
     const startInput = document.getElementById('workday-start-time');
     const endInput = document.getElementById('workday-end-time');
+    const kmInput = document.getElementById('workday-km-input');
+    const routeSummaryEl = document.getElementById('workday-route-summary');
     const clearBtn = document.getElementById('btn-clear-workday');
 
     if (dateSubEl) {
@@ -311,16 +522,30 @@
     }
 
     const saved = workdays[dateISO];
-    if (saved && saved.durationMins > 0) {
+    if (saved && (saved.durationMins > 0 || saved.km > 0)) {
       if (startInput && document.activeElement !== startInput) startInput.value = saved.startTime || '07:00';
       if (endInput && document.activeElement !== endInput) endInput.value = saved.endTime || '15:30';
-      if (badgeEl) badgeEl.textContent = formatDurationHuman(saved.durationMins);
+      if (kmInput && document.activeElement !== kmInput) {
+        kmInput.value = saved.km > 0 ? String(saved.km) : '';
+      }
+      const kmSuffix = saved.km > 0 ? ` • ${formatKm(saved.km)}` : '';
+      if (badgeEl) badgeEl.textContent = `${formatDurationHuman(saved.durationMins)}${kmSuffix}`;
+      if (routeSummaryEl) {
+        if (saved.routeSummary) {
+          routeSummaryEl.textContent = `Маршрут: ${saved.routeSummary}`;
+          routeSummaryEl.classList.remove('hidden');
+        } else {
+          routeSummaryEl.classList.add('hidden');
+        }
+      }
       clearBtn?.classList.remove('hidden');
     } else {
       const s = startInput?.value || '07:00';
       const e = endInput?.value || '15:30';
       const previewMins = calcMinutesBetweenTimes(s, e);
+      if (kmInput && document.activeElement !== kmInput) kmInput.value = '';
       if (badgeEl) badgeEl.textContent = `Не указано (${formatDurationHuman(previewMins)})`;
+      routeSummaryEl?.classList.add('hidden');
       clearBtn?.classList.add('hidden');
     }
   }
@@ -330,20 +555,25 @@
     const startTime = document.getElementById('workday-start-time')?.value || '';
     const endTime = document.getElementById('workday-end-time')?.value || '';
     const durationMins = calcMinutesBetweenTimes(startTime, endTime);
+    const kmRaw = parseFloat(String(document.getElementById('workday-km-input')?.value || '').replace(',', '.'));
+    const km = Number.isFinite(kmRaw) && kmRaw > 0 ? Math.round(kmRaw * 10) / 10 : 0;
 
-    if (durationMins <= 0) {
-      showToast('Укажите корректное время начала и конца дня');
+    if (durationMins <= 0 && km <= 0) {
+      showToast('Укажите время рабочего дня или пробег');
       return;
     }
 
     workdays[dateISO] = {
       startTime,
       endTime,
-      durationMins
+      durationMins,
+      km,
+      routeSummary: workdays[dateISO]?.routeSummary || ''
     };
     saveWorkdays();
     renderAll();
-    showToast(`✅ Рабочий день (${formatRussianDateTitle(dateISO)}): ${formatDurationHuman(durationMins)}`);
+    const kmPart = km > 0 ? `, ${formatKm(km)}` : '';
+    showToast(`✅ День сохранён (${formatRussianDateTitle(dateISO)}): ${formatDurationHuman(durationMins)}${kmPart}`);
   }
 
   function clearWorkdayForActiveDate() {
@@ -352,7 +582,7 @@
       delete workdays[dateISO];
       saveWorkdays();
       renderAll();
-      showToast('Время рабочего дня очищено');
+      showToast('Данные рабочего дня очищены');
     }
   }
 
@@ -397,10 +627,23 @@
       return;
     }
 
-    workdays[dateISO] = { startTime, endTime, durationMins };
+    const kmPrompt = window.prompt(
+      `Пробег за день в км (необязательно):`,
+      existing?.km > 0 ? String(existing.km) : ''
+    );
+    const kmParsed = kmPrompt !== null ? parseFloat(kmPrompt.replace(',', '.')) : existing?.km;
+    const km = Number.isFinite(kmParsed) && kmParsed > 0 ? Math.round(kmParsed * 10) / 10 : 0;
+
+    workdays[dateISO] = {
+      startTime,
+      endTime,
+      durationMins,
+      km,
+      routeSummary: existing?.routeSummary || ''
+    };
     saveWorkdays();
     renderAll();
-    showToast(`✅ День с дорогой: ${formatDurationHuman(durationMins)}`);
+    showToast(`✅ День с дорогой: ${formatDurationHuman(durationMins)}${km > 0 ? ` • ${formatKm(km)}` : ''}`);
   }
 
   // --- РЕНДЕР ОБЪЕКТОВ (БЫСТРЫЕ КНОПКИ) ---
@@ -705,36 +948,48 @@
     }
   }
 
-  // --- СПИСОК ВЫЕЗДОВ ЗА СЕГОДНЯ (НА ГЛАВНОЙ) ---
+  // --- СПИСОК ВЫЕЗДОВ ЗА ВЫБРАННЫЙ ДЕНЬ (НА ГЛАВНОЙ) ---
   function renderTodayEntries() {
-    const todayISO = getTodayISO();
-    const todayList = entries
-      .filter((e) => e.date === todayISO)
-      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const activeDateISO = getActiveWorkdayDateISO();
+    const dayList = getOrderedDayEntries(activeDateISO);
 
-    const countEl = document.getElementById('today-entries-count');
-    if (countEl) {
-      countEl.textContent = `${todayList.length} ${pluralize(todayList.length, 'выезд', 'выезда', 'выездов')}`;
+    const headingEl = document.querySelector('#view-work .today-section .section-heading');
+    if (headingEl) {
+      headingEl.textContent =
+        activeDateISO === getTodayISO()
+          ? 'Объекты за сегодня'
+          : `Объекты за ${formatRussianDateTitle(activeDateISO)}`;
     }
 
     const container = document.getElementById('today-entries-list');
     if (!container) return;
 
-    if (todayList.length === 0) {
+    if (dayList.length === 0) {
       container.innerHTML = `
         <div class="empty-hint-box">
-          За сегодня записей пока нет. Запустите таймер по приезду на объект или добавьте выезд вручную.
+          За выбранный день записей пока нет. Добавьте выезд на объект выше.
         </div>
       `;
       return;
     }
 
-    container.innerHTML = todayList.map((entry) => renderEntryCardHTML(entry)).join('');
+    const allowReorder = dayList.length > 1;
+    container.innerHTML = dayList
+      .map((entry, idx) =>
+        renderEntryCardHTML(entry, {
+          allowReorder,
+          isFirst: idx === 0,
+          isLast: idx === dayList.length - 1,
+          orderNum: idx + 1
+        })
+      )
+      .join('');
     bindEntryCardActions(container);
   }
 
-  function renderEntryCardHTML(entry) {
+  function renderEntryCardHTML(entry, orderOpts = null) {
     const siteTitle = getSiteNameById(entry.siteId, entry.siteName);
+    const numPrefix = orderOpts && orderOpts.allowReorder ? `${orderOpts.orderNum}. ` : '';
     const timeRange =
       entry.startTime && entry.endTime
         ? `<div class="entry-time-range">🕒 ${escapeHtml(entry.startTime)} — ${escapeHtml(entry.endTime)}</div>`
@@ -751,11 +1006,19 @@
       ? `<div class="entry-note">${escapeHtml(entry.note)}</div>`
       : '';
 
+    const reorderButtons =
+      orderOpts && orderOpts.allowReorder
+        ? `
+          <button type="button" class="btn-entry-action btn-order-move move-up" data-id="${escapeHtml(entry.id)}" ${orderOpts.isFirst ? 'disabled' : ''} title="Поднять выше в маршруте">↑</button>
+          <button type="button" class="btn-entry-action btn-order-move move-down" data-id="${escapeHtml(entry.id)}" ${orderOpts.isLast ? 'disabled' : ''} title="Опустить ниже в маршруте">↓</button>
+        `
+        : '';
+
     return `
       <article class="entry-card" data-entry-id="${escapeHtml(entry.id)}">
         <div class="entry-top">
           <div>
-            <div class="entry-site-title">🏗️ ${escapeHtml(siteTitle)}</div>
+            <div class="entry-site-title">${numPrefix}🏗️ ${escapeHtml(siteTitle)}</div>
             ${timeRange}
           </div>
           <span class="entry-duration-badge">${formatDurationHuman(entry.durationMins)}</span>
@@ -763,6 +1026,7 @@
         ${tagsHTML}
         ${noteHTML}
         <div class="entry-actions">
+          ${reorderButtons}
           <button type="button" class="btn-entry-action edit" data-id="${escapeHtml(entry.id)}">✏️ Изменить</button>
           <button type="button" class="btn-entry-action delete" data-id="${escapeHtml(entry.id)}">🗑 Удалить</button>
         </div>
@@ -771,6 +1035,20 @@
   }
 
   function bindEntryCardActions(container) {
+    container.querySelectorAll('.btn-entry-action.move-up').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-id');
+        if (id) moveEntryOrder(id, -1);
+      });
+    });
+
+    container.querySelectorAll('.btn-entry-action.move-down').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-id');
+        if (id) moveEntryOrder(id, 1);
+      });
+    });
+
     container.querySelectorAll('.btn-entry-action.edit').forEach((btn) => {
       btn.addEventListener('click', () => {
         const id = btn.getAttribute('data-id');
@@ -1007,9 +1285,28 @@
 
     const statTime = document.getElementById('stat-total-time');
     const statDec = document.getElementById('stat-total-decimal');
+    const statKmBox = document.getElementById('stat-km-box');
+    const statTotalKm = document.getElementById('stat-total-km');
 
     if (statTime) statTime.textContent = formatDurationClock(totalMins);
     if (statDec) statDec.textContent = `${formatDecimalHours(totalMins)} ч`;
+
+    // Сумма километров за уникальные дни выбранного периода
+    const uniqueDatesInPeriod = new Set(filtered.map((e) => e.date));
+    let totalPeriodKm = 0;
+    uniqueDatesInPeriod.forEach((d) => {
+      if (workdays[d] && workdays[d].km > 0) {
+        totalPeriodKm += Number(workdays[d].km) || 0;
+      }
+    });
+    if (statKmBox && statTotalKm) {
+      if (totalPeriodKm > 0) {
+        statKmBox.classList.remove('hidden');
+        statTotalKm.textContent = formatKm(totalPeriodKm);
+      } else {
+        statKmBox.classList.add('hidden');
+      }
+    }
 
     // Сводка распределения по объектам
     const breakdownCard = document.getElementById('period-sites-breakdown-card');
@@ -1069,14 +1366,21 @@
     let html = '';
     for (const [dateISO, dayEntries] of groupedByDate.entries()) {
       const wd = workdays[dateISO];
-      const dayShiftHTML =
-        wd && wd.durationMins > 0
-          ? `<button type="button" class="day-shift-pill" data-workday-date="${escapeHtml(dateISO)}" title="Изменить общее время дня с дорогой">
-               🚗 День с дорогой: ${formatDurationHuman(wd.durationMins)} (${escapeHtml(wd.startTime)}–${escapeHtml(wd.endTime)}) ✏️
-             </button>`
-          : `<button type="button" class="day-shift-pill" data-workday-date="${escapeHtml(dateISO)}" title="Указать общее время дня с дорогой">
-               + День с дорогой ✏️
+      const hasTime = wd && wd.durationMins > 0;
+      const hasKm = wd && wd.km > 0;
+      let dayShiftHTML = '';
+      if (hasTime || hasKm) {
+        const parts = [];
+        if (hasTime) parts.push(`${formatDurationHuman(wd.durationMins)} (${escapeHtml(wd.startTime)}–${escapeHtml(wd.endTime)})`);
+        if (hasKm) parts.push(formatKm(wd.km));
+        dayShiftHTML = `<button type="button" class="day-shift-pill" data-workday-date="${escapeHtml(dateISO)}" title="Изменить время дня и пробег">
+               🚗 ${parts.join(' • ')} ✏️
              </button>`;
+      } else {
+        dayShiftHTML = `<button type="button" class="day-shift-pill" data-workday-date="${escapeHtml(dateISO)}" title="Указать время дня и пробег">
+               + День / км ✏️
+             </button>`;
+      }
 
       html += `
         <div class="date-group-header">
@@ -1119,6 +1423,24 @@
     return { hasLunch, visibleTags, adjustedMins };
   }
 
+  function getWeekInfo(isoDate) {
+    const [y, m, d] = isoDate.split('-').map(Number);
+    const dateObj = new Date(y, m - 1, d);
+    const dayOfWeek = dateObj.getDay() || 7; // Пн = 1 ... Вс = 7
+    const monday = new Date(dateObj);
+    monday.setDate(dateObj.getDate() - dayOfWeek + 1);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+
+    const fmtShort = (dt) =>
+      `${String(dt.getDate()).padStart(2, '0')}.${String(dt.getMonth() + 1).padStart(2, '0')}`;
+
+    return {
+      key: formatDateISO(monday),
+      label: `${fmtShort(monday)}–${fmtShort(sunday)}`
+    };
+  }
+
   // --- ГЕНЕРАЦИЯ ТЕКСТОВОГО ОТЧЁТА ДЛЯ WHATSAPP / TELEGRAM ---
   function generateTextReport() {
     const filtered = getFilteredEntries();
@@ -1135,46 +1457,82 @@
         byDate.get(e.date).push(e);
       });
 
-      let firstDay = true;
-      for (const [dateISO, list] of byDate.entries()) {
-        if (!firstDay) lines.push('');
-        firstDay = false;
+      // Группируем даты по календарным неделям (Пн–Вс)
+      const byWeek = new Map();
+      const sortedDatesAsc = [...byDate.keys()].sort((a, b) => a.localeCompare(b));
+      sortedDatesAsc.forEach((dateISO) => {
+        const week = getWeekInfo(dateISO);
+        if (!byWeek.has(week.key)) {
+          byWeek.set(week.key, { label: week.label, dates: [] });
+        }
+        byWeek.get(week.key).dates.push(dateISO);
+      });
 
-        let entriesDayMins = 0;
+      const showWeeklyTotals = currentPeriod !== 'today' && currentPeriod !== 'yesterday';
+      let firstWeek = true;
 
-        // Группируем по объектам внутри дня (сколько часов на каждом объекте за день + что делал)
-        const bySiteInDay = new Map();
-        list.forEach((e) => {
-          const { visibleTags, adjustedMins } = getReportEntryAdjusted(e);
-          entriesDayMins += adjustedMins;
+      for (const weekData of byWeek.values()) {
+        if (!firstWeek) lines.push('\n');
+        firstWeek = false;
 
-          const siteTitle = getSiteNameById(e.siteId, e.siteName);
-          if (!bySiteInDay.has(siteTitle)) {
-            bySiteInDay.set(siteTitle, { mins: 0, works: [] });
-          }
-          const rec = bySiteInDay.get(siteTitle);
-          rec.mins += adjustedMins;
-          visibleTags.forEach((t) => {
-            if (t && !rec.works.includes(t)) rec.works.push(t);
+        let weekTotalMins = 0;
+        let weekTotalKm = 0;
+
+        weekData.dates.forEach((dateISO, idx) => {
+          if (idx > 0) lines.push('');
+          const list = byDate.get(dateISO) || [];
+
+          let entriesDayMins = 0;
+
+          // Группируем по объектам внутри дня (сколько часов на каждом объекте за день + что делал)
+          const bySiteInDay = new Map();
+          list.forEach((e) => {
+            const { visibleTags, adjustedMins } = getReportEntryAdjusted(e);
+            entriesDayMins += adjustedMins;
+
+            const siteTitle = getSiteNameById(e.siteId, e.siteName);
+            if (!bySiteInDay.has(siteTitle)) {
+              bySiteInDay.set(siteTitle, { mins: 0, works: [] });
+            }
+            const rec = bySiteInDay.get(siteTitle);
+            rec.mins += adjustedMins;
+            visibleTags.forEach((t) => {
+              if (t && !rec.works.includes(t)) rec.works.push(t);
+            });
+            if (e.note && e.note.trim()) {
+              rec.works.push(e.note.trim());
+            }
           });
-          if (e.note && e.note.trim()) {
-            rec.works.push(e.note.trim());
+
+          const wd = workdays[dateISO];
+          const dayTotalMins = wd && wd.durationMins > 0 ? wd.durationMins : entriesDayMins;
+          const dayKm = wd && wd.km > 0 ? Number(wd.km) || 0 : 0;
+
+          weekTotalMins += dayTotalMins;
+          weekTotalKm += dayKm;
+
+          const intervalInfo =
+            wd && wd.durationMins > 0 && wd.startTime && wd.endTime
+              ? ` (${wd.startTime}–${wd.endTime})`
+              : '';
+
+          lines.push(`📅 ${formatReportDate(dateISO)}`);
+          lines.push(`Всего за день: ${formatDurationHuman(dayTotalMins)}${intervalInfo}`);
+          if (dayKm > 0) {
+            lines.push(`Пробег: ${formatKm(dayKm)}`);
+          }
+
+          for (const [siteTitle, info] of bySiteInDay.entries()) {
+            const worksStr = info.works.length > 0 ? ` — ${info.works.join(', ')}` : '';
+            lines.push(`• ${siteTitle}: ${formatDurationHuman(info.mins)}${worksStr}`);
           }
         });
 
-        const wd = workdays[dateISO];
-        const dayTotalMins = wd && wd.durationMins > 0 ? wd.durationMins : entriesDayMins;
-        const intervalInfo =
-          wd && wd.durationMins > 0 && wd.startTime && wd.endTime
-            ? ` (${wd.startTime}–${wd.endTime})`
-            : '';
-
-        lines.push(`📅 ${formatReportDate(dateISO)}`);
-        lines.push(`Всего за день: ${formatDurationHuman(dayTotalMins)}${intervalInfo}`);
-
-        for (const [siteTitle, info] of bySiteInDay.entries()) {
-          const worksStr = info.works.length > 0 ? ` — ${info.works.join(', ')}` : '';
-          lines.push(`• ${siteTitle}: ${formatDurationHuman(info.mins)}${worksStr}`);
+        if (showWeeklyTotals) {
+          lines.push('──────────────────────');
+          lines.push(`📊 Итого за неделю (${weekData.label}):`);
+          lines.push(`⏱ Часы за неделю: ${formatDurationClock(weekTotalMins)} (${formatDecimalHours(weekTotalMins)} ч)`);
+          lines.push(`🚗 Пробег за неделю: ${formatKm(weekTotalKm)}`);
         }
       }
     } else {
@@ -1239,7 +1597,9 @@
     const headers = [
       'Дата',
       'День с дорогой (ЧЧ:ММ)',
+      'Пробег за день (км)',
       'Объект',
+      'Адрес объекта',
       'Примечание к объекту',
       'Приезд (С)',
       'Отъезд (До)',
@@ -1257,19 +1617,33 @@
       return str;
     };
 
+    const kmSeenDates = new Set();
+    let totalCsvKm = 0;
+
     const rows = filtered.map((e) => {
       const siteObj = sites.find((s) => s.id === e.siteId);
       const siteTitle = siteObj ? siteObj.name : (e.siteName || '');
+      const siteAddr = siteObj ? (siteObj.address || '') : '';
       const siteNote = siteObj ? (siteObj.note || '') : '';
       const decimalHours = formatDecimalHours(e.durationMins).replace('.', ',');
       const worksStr = Array.isArray(e.tags) ? e.tags.join(', ') : '';
       const wd = workdays[e.date];
       const wdStr = wd && wd.durationMins > 0 ? formatDurationHHMM(wd.durationMins) : '';
+      let kmStr = '';
+      if (!kmSeenDates.has(e.date)) {
+        kmSeenDates.add(e.date);
+        if (wd && wd.km > 0) {
+          kmStr = String(wd.km).replace('.', ',');
+          totalCsvKm += Number(wd.km) || 0;
+        }
+      }
 
       return [
         e.date,
         wdStr,
+        kmStr,
         siteTitle,
+        siteAddr,
         siteNote,
         e.startTime || '',
         e.endTime || '',
@@ -1287,6 +1661,8 @@
     rows.push(
       [
         'ИТОГО',
+        '',
+        totalCsvKm > 0 ? String(Math.round(totalCsvKm * 10) / 10).replace('.', ',') : '',
         '',
         '',
         '',
@@ -1332,17 +1708,26 @@
           .map((site) => {
             const siteEntries = entries.filter((e) => e.siteId === site.id);
             const totalMins = siteEntries.reduce((s, e) => s + (Number(e.durationMins) || 0), 0);
+            const hasCoords = typeof site.lat === 'number' && typeof site.lon === 'number';
+            const addrHTML = site.address
+              ? `<div class="dir-site-address">📍 ${escapeHtml(site.address)} ${
+                  hasCoords
+                    ? '<span class="site-geo-ok">✓</span>'
+                    : '<span class="site-geo-warn">(не найден)</span>'
+                }</div>`
+              : `<div class="dir-site-address" style="color:var(--text-muted)">📍 Адрес не указан</div>`;
             return `
               <div class="dir-site-card">
                 <div class="dir-site-header">
                   <div>
                     <div class="dir-site-name">🏗️ ${escapeHtml(site.name)}</div>
+                    ${addrHTML}
                     ${site.note ? `<div class="dir-site-note">${escapeHtml(site.note)}</div>` : ''}
                   </div>
-                  <span class="dir-site-stats">${siteEntries.length} выезд. • ${formatDurationHuman(totalMins)}</span>
+                  <span class="dir-site-stats">${formatDurationHuman(totalMins)}</span>
                 </div>
                 <div class="dir-site-actions">
-                  <button type="button" class="btn-entry-action select-site" data-id="${escapeHtml(site.id)}">▶ Выбрать для записи</button>
+                  <button type="button" class="btn-entry-action select-site" data-id="${escapeHtml(site.id)}">▶ Выбрать</button>
                   <button type="button" class="btn-entry-action edit-site" data-id="${escapeHtml(site.id)}">✏️ Изменить</button>
                   <button type="button" class="btn-entry-action delete delete-site" data-id="${escapeHtml(site.id)}">🗑</button>
                 </div>
@@ -1362,7 +1747,7 @@
         });
 
         dirList.querySelectorAll('.edit-site').forEach((btn) => {
-          btn.addEventListener('click', () => {
+          btn.addEventListener('click', async () => {
             const id = btn.getAttribute('data-id');
             const site = sites.find((s) => s.id === id);
             if (!site) return;
@@ -1370,12 +1755,40 @@
             if (newName === null) return;
             const trimmed = newName.trim();
             if (!trimmed) return;
-            const newNote = window.prompt('Адрес / прораб / примечание:', site.note || '');
+            const newAddress = window.prompt('Адрес объекта для расчёта км (напр. Keskuskatu 5, Espoo):', site.address || '');
+            const newNote = window.prompt('Прораб / примечание:', site.note || '');
             site.name = trimmed;
             if (newNote !== null) site.note = newNote.trim();
+
+            let addressChanged = false;
+            if (newAddress !== null) {
+              const trimmedAddr = newAddress.trim();
+              if (trimmedAddr !== (site.address || '')) {
+                site.address = trimmedAddr;
+                site.lat = null;
+                site.lon = null;
+                addressChanged = true;
+              }
+            }
+
             saveSites();
             renderAll();
-            showToast('✅ Объект обновлён');
+
+            if (addressChanged && site.address) {
+              showToast('🔍 Проверяю адрес на карте...');
+              const geo = await geocodeAddress(site.address);
+              if (geo) {
+                site.lat = geo.lat;
+                site.lon = geo.lon;
+                saveSites();
+                renderAll();
+                showToast('✅ Объект обновлён, адрес найден на карте');
+              } else {
+                showToast('⚠️ Объект обновлён, но адрес не найден (уточните город/улицу)');
+              }
+            } else {
+              showToast('✅ Объект обновлён');
+            }
           });
         });
 
@@ -1428,17 +1841,29 @@
     }
   }
 
-  function addNewSite(name, note) {
+  function addNewSite(name, address, note) {
     const trimmedName = (name || '').trim();
     if (!trimmedName) {
       showToast('Введите название объекта');
       return null;
     }
 
+    const trimmedAddr = (address || '').trim();
     const existing = sites.find((s) => s.name.toLowerCase() === trimmedName.toLowerCase());
     if (existing) {
       selectedSiteId = existing.id;
       existing.lastUsedAt = Date.now();
+      if (trimmedAddr && !existing.address) {
+        existing.address = trimmedAddr;
+        geocodeAddress(trimmedAddr).then((geo) => {
+          if (geo) {
+            existing.lat = geo.lat;
+            existing.lon = geo.lon;
+            saveSites();
+            renderDirectoryTab();
+          }
+        });
+      }
       if (note && !existing.note) existing.note = note.trim();
       saveSites();
       renderAll();
@@ -1448,6 +1873,9 @@
     const newSite = {
       id: generateId(),
       name: trimmedName,
+      address: trimmedAddr,
+      lat: null,
+      lon: null,
       note: (note || '').trim(),
       lastUsedAt: Date.now(),
       createdAt: Date.now()
@@ -1457,7 +1885,23 @@
     selectedSiteId = newSite.id;
     saveSites();
     renderAll();
-    showToast(`🏗️ Добавлен объект: ${newSite.name}`);
+
+    if (trimmedAddr) {
+      showToast(`🏗️ Добавлен «${newSite.name}», ищу адрес...`);
+      geocodeAddress(trimmedAddr).then((geo) => {
+        if (geo) {
+          newSite.lat = geo.lat;
+          newSite.lon = geo.lon;
+          saveSites();
+          renderDirectoryTab();
+          showToast(`✅ Адрес «${newSite.name}» найден на карте`);
+        } else {
+          showToast(`⚠️ Объект добавлен, но адрес не распознан (уточните город)`);
+        }
+      });
+    } else {
+      showToast(`🏗️ Добавлен объект: ${newSite.name}`);
+    }
     return newSite;
   }
 
@@ -1647,10 +2091,12 @@
     });
     document.getElementById('btn-save-new-site')?.addEventListener('click', () => {
       const nameInput = document.getElementById('new-site-name-input');
+      const addrInput = document.getElementById('new-site-address-input');
       const noteInput = document.getElementById('new-site-note-input');
-      const created = addNewSite(nameInput?.value, noteInput?.value);
+      const created = addNewSite(nameInput?.value, addrInput?.value, noteInput?.value);
       if (created) {
         if (nameInput) nameInput.value = '';
+        if (addrInput) addrInput.value = '';
         if (noteInput) noteInput.value = '';
         document.getElementById('inline-new-site-box')?.classList.add('hidden');
       }
@@ -1699,6 +2145,7 @@
       manualDateInput.value = getTodayISO();
       manualDateInput.addEventListener('change', () => {
         renderWorkdayCard();
+        renderTodayEntries();
       });
     }
     document.getElementById('btn-date-today')?.addEventListener('click', () => {
@@ -1706,6 +2153,7 @@
       document.getElementById('btn-date-today')?.classList.add('active');
       document.getElementById('btn-date-yesterday')?.classList.remove('active');
       renderWorkdayCard();
+      renderTodayEntries();
     });
     document.getElementById('btn-date-yesterday')?.addEventListener('click', () => {
       const y = new Date();
@@ -1714,9 +2162,10 @@
       document.getElementById('btn-date-yesterday')?.classList.add('active');
       document.getElementById('btn-date-today')?.classList.remove('active');
       renderWorkdayCard();
+      renderTodayEntries();
     });
 
-    // Блок общего рабочего дня с дорогой
+    // Блок общего рабочего дня с дорогой и расчёт километров
     document.getElementById('workday-start-time')?.addEventListener('input', () => {
       const s = document.getElementById('workday-start-time')?.value || '07:00';
       const e = document.getElementById('workday-end-time')?.value || '15:30';
@@ -1728,6 +2177,9 @@
       const e = document.getElementById('workday-end-time')?.value || '15:30';
       const badgeEl = document.getElementById('workday-total-badge');
       if (badgeEl) badgeEl.textContent = formatDurationHuman(calcMinutesBetweenTimes(s, e));
+    });
+    document.getElementById('btn-calc-workday-km')?.addEventListener('click', () => {
+      calculateDayKilometers(getActiveWorkdayDateISO());
     });
     document.getElementById('btn-save-workday')?.addEventListener('click', saveWorkdayForActiveDate);
     document.getElementById('btn-clear-workday')?.addEventListener('click', clearWorkdayForActiveDate);
@@ -1871,9 +2323,11 @@
     // Вкладка 3: добавление объекта и тегов в справочнике
     document.getElementById('btn-dir-add-site')?.addEventListener('click', () => {
       const nameEl = document.getElementById('dir-site-name');
+      const addrEl = document.getElementById('dir-site-address');
       const noteEl = document.getElementById('dir-site-note');
-      if (addNewSite(nameEl?.value, noteEl?.value)) {
+      if (addNewSite(nameEl?.value, addrEl?.value, noteEl?.value)) {
         if (nameEl) nameEl.value = '';
+        if (addrEl) addrEl.value = '';
         if (noteEl) noteEl.value = '';
       }
     });
