@@ -1423,6 +1423,24 @@
     return { hasLunch, visibleTags, adjustedMins };
   }
 
+  function getWeekInfo(isoDate) {
+    const [y, m, d] = isoDate.split('-').map(Number);
+    const dateObj = new Date(y, m - 1, d);
+    const dayOfWeek = dateObj.getDay() || 7; // Пн = 1 ... Вс = 7
+    const monday = new Date(dateObj);
+    monday.setDate(dateObj.getDate() - dayOfWeek + 1);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+
+    const fmtShort = (dt) =>
+      `${String(dt.getDate()).padStart(2, '0')}.${String(dt.getMonth() + 1).padStart(2, '0')}`;
+
+    return {
+      key: formatDateISO(monday),
+      label: `${fmtShort(monday)}–${fmtShort(sunday)}`
+    };
+  }
+
   // --- ГЕНЕРАЦИЯ ТЕКСТОВОГО ОТЧЁТА ДЛЯ WHATSAPP / TELEGRAM ---
   function generateTextReport() {
     const filtered = getFilteredEntries();
@@ -1439,49 +1457,82 @@
         byDate.get(e.date).push(e);
       });
 
-      let firstDay = true;
-      for (const [dateISO, list] of byDate.entries()) {
-        if (!firstDay) lines.push('');
-        firstDay = false;
+      // Группируем даты по календарным неделям (Пн–Вс)
+      const byWeek = new Map();
+      const sortedDatesAsc = [...byDate.keys()].sort((a, b) => a.localeCompare(b));
+      sortedDatesAsc.forEach((dateISO) => {
+        const week = getWeekInfo(dateISO);
+        if (!byWeek.has(week.key)) {
+          byWeek.set(week.key, { label: week.label, dates: [] });
+        }
+        byWeek.get(week.key).dates.push(dateISO);
+      });
 
-        let entriesDayMins = 0;
+      const showWeeklyTotals = currentPeriod !== 'today' && currentPeriod !== 'yesterday';
+      let firstWeek = true;
 
-        // Группируем по объектам внутри дня (сколько часов на каждом объекте за день + что делал)
-        const bySiteInDay = new Map();
-        list.forEach((e) => {
-          const { visibleTags, adjustedMins } = getReportEntryAdjusted(e);
-          entriesDayMins += adjustedMins;
+      for (const weekData of byWeek.values()) {
+        if (!firstWeek) lines.push('\n');
+        firstWeek = false;
 
-          const siteTitle = getSiteNameById(e.siteId, e.siteName);
-          if (!bySiteInDay.has(siteTitle)) {
-            bySiteInDay.set(siteTitle, { mins: 0, works: [] });
-          }
-          const rec = bySiteInDay.get(siteTitle);
-          rec.mins += adjustedMins;
-          visibleTags.forEach((t) => {
-            if (t && !rec.works.includes(t)) rec.works.push(t);
+        let weekTotalMins = 0;
+        let weekTotalKm = 0;
+
+        weekData.dates.forEach((dateISO, idx) => {
+          if (idx > 0) lines.push('');
+          const list = byDate.get(dateISO) || [];
+
+          let entriesDayMins = 0;
+
+          // Группируем по объектам внутри дня (сколько часов на каждом объекте за день + что делал)
+          const bySiteInDay = new Map();
+          list.forEach((e) => {
+            const { visibleTags, adjustedMins } = getReportEntryAdjusted(e);
+            entriesDayMins += adjustedMins;
+
+            const siteTitle = getSiteNameById(e.siteId, e.siteName);
+            if (!bySiteInDay.has(siteTitle)) {
+              bySiteInDay.set(siteTitle, { mins: 0, works: [] });
+            }
+            const rec = bySiteInDay.get(siteTitle);
+            rec.mins += adjustedMins;
+            visibleTags.forEach((t) => {
+              if (t && !rec.works.includes(t)) rec.works.push(t);
+            });
+            if (e.note && e.note.trim()) {
+              rec.works.push(e.note.trim());
+            }
           });
-          if (e.note && e.note.trim()) {
-            rec.works.push(e.note.trim());
+
+          const wd = workdays[dateISO];
+          const dayTotalMins = wd && wd.durationMins > 0 ? wd.durationMins : entriesDayMins;
+          const dayKm = wd && wd.km > 0 ? Number(wd.km) || 0 : 0;
+
+          weekTotalMins += dayTotalMins;
+          weekTotalKm += dayKm;
+
+          const intervalInfo =
+            wd && wd.durationMins > 0 && wd.startTime && wd.endTime
+              ? ` (${wd.startTime}–${wd.endTime})`
+              : '';
+
+          lines.push(`📅 ${formatReportDate(dateISO)}`);
+          lines.push(`Всего за день: ${formatDurationHuman(dayTotalMins)}${intervalInfo}`);
+          if (dayKm > 0) {
+            lines.push(`Пробег: ${formatKm(dayKm)}`);
+          }
+
+          for (const [siteTitle, info] of bySiteInDay.entries()) {
+            const worksStr = info.works.length > 0 ? ` — ${info.works.join(', ')}` : '';
+            lines.push(`• ${siteTitle}: ${formatDurationHuman(info.mins)}${worksStr}`);
           }
         });
 
-        const wd = workdays[dateISO];
-        const dayTotalMins = wd && wd.durationMins > 0 ? wd.durationMins : entriesDayMins;
-        const intervalInfo =
-          wd && wd.durationMins > 0 && wd.startTime && wd.endTime
-            ? ` (${wd.startTime}–${wd.endTime})`
-            : '';
-
-        lines.push(`📅 ${formatReportDate(dateISO)}`);
-        lines.push(`Всего за день: ${formatDurationHuman(dayTotalMins)}${intervalInfo}`);
-        if (wd && wd.km > 0) {
-          lines.push(`Пробег: ${formatKm(wd.km)}`);
-        }
-
-        for (const [siteTitle, info] of bySiteInDay.entries()) {
-          const worksStr = info.works.length > 0 ? ` — ${info.works.join(', ')}` : '';
-          lines.push(`• ${siteTitle}: ${formatDurationHuman(info.mins)}${worksStr}`);
+        if (showWeeklyTotals) {
+          lines.push('──────────────────────');
+          lines.push(`📊 Итого за неделю (${weekData.label}):`);
+          lines.push(`⏱ Часы за неделю: ${formatDurationClock(weekTotalMins)} (${formatDecimalHours(weekTotalMins)} ч)`);
+          lines.push(`🚗 Пробег за неделю: ${formatKm(weekTotalKm)}`);
         }
       }
     } else {
