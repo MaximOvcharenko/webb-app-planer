@@ -1,4 +1,4 @@
-const CACHE_NAME = 'geojournal-v8';
+const CACHE_NAME = 'geojournal-v10';
 const ASSETS = [
   './',
   './index.html',

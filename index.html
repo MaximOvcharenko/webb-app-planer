@@ -84,7 +84,8 @@
           <!-- Форма быстрого добавления нового объекта -->
           <div class="inline-box hidden" id="inline-new-site-box">
             <input type="text" class="input-field" id="new-site-name-input" placeholder="Название (напр. ЖК Солнечный, корп. 3)" autocomplete="off" />
-            <input type="text" class="input-field mt-8" id="new-site-note-input" placeholder="Адрес / прораб / примечание (необязательно)" autocomplete="off" />
+            <input type="text" class="input-field mt-8" id="new-site-address-input" placeholder="Адрес для расчёта км (напр. Keskuskatu 5, Espoo)" autocomplete="off" />
+            <input type="text" class="input-field mt-8" id="new-site-note-input" placeholder="Прораб или примечание (необязательно)" autocomplete="off" />
             <div class="inline-box-actions">
               <button type="button" class="btn btn-secondary btn-sm" id="btn-cancel-new-site">Отмена</button>
               <button type="button" class="btn btn-primary btn-sm" id="btn-save-new-site">Добавить и выбрать</button>
@@ -242,11 +243,22 @@
           </div>
         </div>
 
+        <div class="workday-km-row mt-10">
+          <div class="input-group">
+            <label for="workday-km-input">Пробег за день (км)</label>
+            <input type="number" min="0" step="0.5" class="input-field text-center" id="workday-km-input" placeholder="0" inputmode="decimal" />
+          </div>
+          <button type="button" class="btn btn-secondary btn-calc-km" id="btn-calc-workday-km" title="Посчитать пробег по адресам объектов за этот день">
+            🗺️ Посчитать км
+          </button>
+        </div>
+        <div class="workday-route-summary hidden mt-6" id="workday-route-summary"></div>
+
         <div class="workday-actions mt-10">
           <button type="button" class="btn btn-primary btn-sm w-full" id="btn-save-workday">
-            ✓ Сохранить общее время дня
+            ✓ Сохранить день и пробег
           </button>
-          <button type="button" class="btn btn-secondary btn-sm hidden" id="btn-clear-workday" title="Очистить время дня">
+          <button type="button" class="btn btn-secondary btn-sm hidden" id="btn-clear-workday" title="Очистить данные дня">
             ✕
           </button>
         </div>
@@ -299,6 +311,11 @@
             <strong class="stat-value" id="stat-total-time">0 ч 00 м</strong>
             <span class="stat-sub" id="stat-total-decimal">0.0 ч</span>
           </div>
+          <div class="stat-box hidden" id="stat-km-box">
+            <span class="stat-label">Пробег за период</span>
+            <strong class="stat-value" id="stat-total-km">0 км</strong>
+            <span class="stat-sub">по дням</span>
+          </div>
         </div>
 
         <!-- Кнопки экспорта -->
@@ -337,11 +354,12 @@
           <h2 class="card-Title">Строительные объекты</h2>
           <span class="subtle-count" id="sites-total-count">0</span>
         </div>
-        <p class="card-desc">Нажмите «Начать выезд» на любом объекте, чтобы сразу перейти к записи.</p>
+        <p class="card-desc">Укажите адрес объекта, чтобы автоматически считать километры по дорогам.</p>
 
         <div class="add-site-form mt-10">
           <input type="text" class="input-field" id="dir-site-name" placeholder="Название нового объекта..." autocomplete="off" />
-          <input type="text" class="input-field mt-8" id="dir-site-note" placeholder="Адрес, прораб или комментарий (необязательно)" autocomplete="off" />
+          <input type="text" class="input-field mt-8" id="dir-site-address" placeholder="Адрес объекта (напр. Keskuskatu 5, Espoo)" autocomplete="off" />
+          <input type="text" class="input-field mt-8" id="dir-site-note" placeholder="Прораб или комментарий (необязательно)" autocomplete="off" />
           <button type="button" class="btn btn-primary mt-8 w-full" id="btn-dir-add-site">+ Добавить объект в справочник</button>
         </div>
 
